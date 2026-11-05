@@ -1,0 +1,53 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-navy-900: #1f2a4c;
+  --color-navy-800: #253050;
+  --color-aqua-300: #a3ccda;
+  --color-aqua-200: #bbd7dc;
+  --color-aqua-50: #eaf3f5;
+  --color-error: #b42318;
+  --color-success: #1f7a4d;
+  --font-sans: var(--font-montserrat), 'Helvetica Neue', Arial, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: linear-gradient(180deg, var(--color-aqua-200) 0%, var(--color-aqua-50) 70%) fixed;
+  color: var(--color-navy-900);
+  min-height: 100dvh;
+}
+
+/* SmartGRID motif, fading out downward. */
+.smartgrid {
+  background-image:
+    linear-gradient(var(--color-aqua-300) 3px, transparent 3px),
+    linear-gradient(90deg, var(--color-aqua-300) 3px, transparent 3px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.55), transparent);
+  -webkit-mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.55), transparent);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-pop-in {
+  animation: pop-in 280ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop-in {
+    animation: none;
+  }
+}
