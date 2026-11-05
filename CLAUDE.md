@@ -192,7 +192,9 @@ npm run qr -- https://tsc-acetech-2026.vercel.app   # print QR + poster → publ
 vercel deploy --prod --yes                          # project: dhruvs-projects-3e416bab/tsc-acetech-2026
 ```
 
-**Production:** https://tsc-acetech-2026.vercel.app. LSQ env vars are set in Vercel (Production and Development).
+**Production:** https://tsc-acetech-2026.vercel.app. LSQ env vars are set in Vercel (Production and Development; Preview is not set yet).
+
+**Git → Vercel:** the GitHub repo `DHRUV130703/AceTech-2026-TSC` is connected. Every push to `main` deploys to production automatically, and other branches get preview URLs. Run tests and the build before pushing to `main`.
 
 - Unit tests are required for `lead-schema.ts` (normalisation and edge cases) and `buildPayload()` (exact LSQ JSON shape, UTC datetime format, `mx_Custom_6` mapping).
 - Route tests mock `fetch` for success, 5xx-then-success retry, 4xx with no retry, timeout, and honeypot.
