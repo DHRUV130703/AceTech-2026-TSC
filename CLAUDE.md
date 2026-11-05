@@ -241,7 +241,10 @@ Every **valid** submission is also written to **Aiven Postgres** (table `acetech
 
 - One row per submission. `lead_kind` is `new` or `existing`. `lsq_outcome` is `created`, `activity_logged` or `failed`. The row also stores `lsq_status`, `lsq_prospect_id`, `lsq_activity_event` (231/232), the redacted `lsq_error`, `user_agent`, and `created_at` (UTC).
 - Invalid submissions and honeypot hits are **not** logged.
-- The insert runs in `after()` (`next/server`), after the response is sent. It adds no latency and **never** affects the visitor. If the DB is down, `db_insert_failed` is logged with the full lead.
+- The insert is **awaited before responding**, capped at 3s, and never throws. `after()` was tried first, but its writes did not land on Vercel. If the DB is slow or down, the visitor still gets their result, and `db_error` / `db_timeout` / `db_config_invalid` is logged with the full lead.
+- Every `/api/lead` response carries an **`x-lead-db`** header (`logged` | `not_configured` | `config_invalid` | `error` | `timeout`). Check it with `curl -D -` to verify DB logging in production. The Vercel log CLI only shows the first log line per request.
+- `DATABASE_URL` accepts the raw URI, a quoted URI, or Aiven's `psql '…'` quick-connect line.
+- Functions run in **`bom1` (Mumbai)** via `vercel.json`, next to LeadSquared (India) and Aiven. A warm submit takes about 0.9s; in `iad1` it was 1.7–4.4s.
 - Rows with `lsq_outcome = 'failed'` are the backfill list. Export them with `npm run leads:export -- failed`.
 - Connection: `DATABASE_URL` (server-only). The pool uses `max: 3`, because the Aiven plan allows only 15 connections. TLS is always on. Set `DATABASE_CA_CERT` (the Aiven project CA, PEM) to verify the server cert; otherwise it encrypts without verifying, the same as `sslmode=require`.
 - `npm run db:migrate` applies the schema (idempotent). `npm run leads:export` writes a CSV to `exports/` (git-ignored, times in IST).
