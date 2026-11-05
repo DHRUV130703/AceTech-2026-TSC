@@ -15,20 +15,30 @@ describe('logLeadToDb', () => {
       { lead, kind: 'existing', outcome: 'activity_logged', lsqStatus: 200, prospectId: 'p1', activityEvent: 232, userAgent: 'UA' },
       { query } as unknown as Pool,
     );
-    expect(ok).toBe(true);
+    expect(ok).toBe('logged');
     expect(query).toHaveBeenCalledWith(INSERT_SQL, ['Priya Sharma', '9876543210', 'Studio Co', 'existing', 'activity_logged', 200, 'p1', 232, null, 'UA']);
   });
 
   it('never throws when the DB fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const query = vi.fn().mockRejectedValue(new Error('connection refused'));
-    await expect(logLeadToDb({ lead, kind: 'new', outcome: 'created', lsqStatus: 200 }, { query } as unknown as Pool)).resolves.toBe(false);
+    await expect(logLeadToDb({ lead, kind: 'new', outcome: 'created', lsqStatus: 200 }, { query } as unknown as Pool)).resolves.toBe('error');
   });
 
   it('is a no-op when DATABASE_URL is not configured', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(logLeadToDb({ lead, kind: 'new', outcome: 'created', lsqStatus: 200 })).resolves.toBe(false);
+    await expect(logLeadToDb({ lead, kind: 'new', outcome: 'created', lsqStatus: 200 })).resolves.toBe('not_configured');
   });
+});
+
+it('gives up after 3s so a slow DB never blocks the visitor', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const query = vi.fn().mockReturnValue(new Promise(() => {}));
+  const p = logLeadToDb({ lead, kind: 'new', outcome: 'created', lsqStatus: 200 }, { query } as unknown as Pool);
+  await vi.advanceTimersByTimeAsync(3_000);
+  await expect(p).resolves.toBe('timeout');
+  vi.useRealTimers();
 });
 
 describe('poolConfig', () => {

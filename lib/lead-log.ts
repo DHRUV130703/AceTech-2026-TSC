@@ -15,31 +15,39 @@ export type LeadLogEntry = {
   userAgent?: string | null;
 };
 
+/** logged | not_configured | config_invalid | error | timeout — surfaced as the `x-lead-db` response header. */
+export type DbLogStatus = 'logged' | 'not_configured' | 'config_invalid' | 'error' | 'timeout';
+
 export const INSERT_SQL = `INSERT INTO acetech_leads
   (name, phone, organisation, lead_kind, lsq_outcome, lsq_status, lsq_prospect_id, lsq_activity_event, lsq_error, user_agent)
   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`;
 
+const DB_BUDGET_MS = 3_000;
+
 /**
- * Writes one row per valid submission to Postgres. Never throws: the DB is a secondary record
- * and must never break the visitor's flow. Failures are logged (with the full lead) for backfill.
+ * Writes one row per valid submission to Postgres. Never throws and never waits more than
+ * DB_BUDGET_MS: the DB is a secondary record and must never break the visitor's flow.
+ * Failures are logged with the full lead for backfill.
  */
-export async function logLeadToDb(entry: LeadLogEntry, injected?: Pick<Pool, 'query'> | null): Promise<boolean> {
+export async function logLeadToDb(entry: LeadLogEntry, injected?: Pick<Pool, 'query'> | null): Promise<DbLogStatus> {
+  const fail = (status: DbLogStatus, detail: string) => {
+    console.error(JSON.stringify({ outcome: `db_${status}`, detail, backfill: entry.lead, kind: entry.kind, lsqOutcome: entry.outcome }));
+    return status;
+  };
+
   let pool: Pick<Pool, 'query'> | null;
   try {
     pool = injected !== undefined ? injected : getPool();
   } catch (err) {
-    console.error(
-      JSON.stringify({ outcome: 'db_config_invalid', detail: err instanceof Error ? err.message : String(err), backfill: entry.lead, kind: entry.kind, lsqOutcome: entry.outcome }),
-    );
-    return false;
+    return fail('config_invalid', err instanceof Error ? err.message : String(err));
   }
   if (!pool) {
-    console.warn(JSON.stringify({ outcome: 'db_not_configured', hasEnv: process.env.DATABASE_URL !== undefined, envLen: process.env.DATABASE_URL?.length ?? 0 }));
-    return false;
+    console.warn(JSON.stringify({ outcome: 'db_not_configured' }));
+    return 'not_configured';
   }
-  try {
-    const t0 = Date.now();
-    await pool.query(INSERT_SQL, [
+
+  const insert = pool
+    .query(INSERT_SQL, [
       entry.lead.name,
       entry.lead.phone,
       entry.lead.organisation,
@@ -50,13 +58,17 @@ export async function logLeadToDb(entry: LeadLogEntry, injected?: Pick<Pool, 'qu
       entry.activityEvent ?? null,
       entry.error?.slice(0, 1000) ?? null,
       entry.userAgent?.slice(0, 300) ?? null,
-    ]);
-    console.info(JSON.stringify({ outcome: 'db_logged', kind: entry.kind, lsqOutcome: entry.outcome, ms: Date.now() - t0 }));
-    return true;
-  } catch (err) {
-    console.error(
-      JSON.stringify({ outcome: 'db_insert_failed', detail: err instanceof Error ? err.message : String(err), backfill: entry.lead, kind: entry.kind, lsqOutcome: entry.outcome }),
-    );
-    return false;
+    ])
+    .then(() => 'logged' as const)
+    .catch((err: unknown) => fail('error', err instanceof Error ? err.message : String(err)));
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<DbLogStatus>((resolve) => {
+    timer = setTimeout(() => resolve(fail('timeout', `insert exceeded ${DB_BUDGET_MS}ms`)), DB_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([insert, timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }

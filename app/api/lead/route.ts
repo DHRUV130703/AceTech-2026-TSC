@@ -1,4 +1,4 @@
-import { after, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { leadSchema, fieldErrors, maskPhone } from '@/lib/lead-schema';
 import { createLeadWithActivity, findLeadByPhone, fingerprint, readConfig, type LeadKind, type LookupResult } from '@/lib/leadsquared';
 import { logLeadToDb } from '@/lib/lead-log';
@@ -68,20 +68,19 @@ export async function POST(req: Request) {
   const prospectId = lookup.status === 'found' ? lookup.prospectId : undefined;
   const outcome = result.ok ? (kind === 'new' ? 'created' : 'activity_logged') : 'failed';
 
-  // 3. Secondary record in Postgres — after the response is sent, so it adds no latency
-  //    and can never break the visitor's flow.
-  after(() =>
-    logLeadToDb({
-      lead,
-      kind,
-      outcome,
-      lsqStatus: result.status,
-      prospectId,
-      activityEvent: activityEventFor(kind),
-      error: result.ok ? undefined : result.detail,
-      userAgent: req.headers.get('user-agent'),
-    }),
-  );
+  // 3. Secondary record in Postgres. Awaited (capped at 3s, never throws) so the row is
+  //    guaranteed written before we answer; status exposed as `x-lead-db` for verification.
+  const db = await logLeadToDb({
+    lead,
+    kind,
+    outcome,
+    lsqStatus: result.status,
+    prospectId,
+    activityEvent: activityEventFor(kind),
+    error: result.ok ? undefined : result.detail,
+    userAgent: req.headers.get('user-agent'),
+  });
+  const headers = { 'x-lead-db': db };
 
   const base = {
     ts: new Date().toISOString(),
@@ -92,8 +91,8 @@ export async function POST(req: Request) {
     lsqStatus: result.status,
   };
   if (result.ok) {
-    console.info(JSON.stringify({ ...base, outcome }));
-    return NextResponse.json({ ok: true, existing: kind === 'existing' });
+    console.info(JSON.stringify({ ...base, outcome, db }));
+    return NextResponse.json({ ok: true, existing: kind === 'existing' }, { headers });
   }
 
   // On auth failure, log non-reversible key fingerprints to diagnose misconfigured env vars.
@@ -108,6 +107,6 @@ export async function POST(req: Request) {
   }
 
   // Full lead logged ONLY on failure so it can be backfilled manually into LSQ.
-  console.error(JSON.stringify({ ...base, outcome: 'upstream_failed', detail: result.detail, creds, backfill: lead }));
-  return NextResponse.json({ ok: false, error: 'upstream' }, { status: 502 });
+  console.error(JSON.stringify({ ...base, outcome: 'upstream_failed', detail: result.detail, creds, db, backfill: lead }));
+  return NextResponse.json({ ok: false, error: 'upstream' }, { status: 502, headers });
 }

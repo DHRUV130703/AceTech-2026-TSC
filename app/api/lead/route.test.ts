@@ -1,15 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const afterCallbacks: Array<() => unknown> = [];
-vi.mock('next/server', async (orig) => ({
-  ...(await orig<typeof import('next/server')>()),
-  after: (fn: () => unknown) => afterCallbacks.push(fn),
-}));
-const logLeadToDb = vi.fn().mockResolvedValue(true);
+const logLeadToDb = vi.fn().mockResolvedValue('logged');
 vi.mock('@/lib/lead-log', () => ({ logLeadToDb: (...a: unknown[]) => logLeadToDb(...a) }));
-const runAfter = async () => {
-  for (const fn of afterCallbacks.splice(0)) await fn();
-};
 
 const createLeadWithActivity = vi.fn();
 const findLeadByPhone = vi.fn();
@@ -36,7 +28,6 @@ describe('POST /api/lead', () => {
   beforeEach(() => {
     createLeadWithActivity.mockReset();
     logLeadToDb.mockClear();
-    afterCallbacks.length = 0;
     findLeadByPhone.mockReset().mockResolvedValue({ status: 'not_found' });
     vi.spyOn(console, 'info').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -98,11 +89,10 @@ describe('POST /api/lead', () => {
   });
 
   describe('Postgres log', () => {
-    it('logs a new lead after the response', async () => {
+    it('logs a new lead before responding and exposes x-lead-db', async () => {
       createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
-      await POST(req(valid));
-      expect(logLeadToDb).not.toHaveBeenCalled(); // deferred via after()
-      await runAfter();
+      const res = await POST(req(valid));
+      expect(res.headers.get('x-lead-db')).toBe('logged');
       expect(logLeadToDb).toHaveBeenCalledWith(
         expect.objectContaining({ lead: valid, kind: 'new', outcome: 'created', lsqStatus: 200, activityEvent: 231 }),
       );
@@ -112,7 +102,6 @@ describe('POST /api/lead', () => {
       findLeadByPhone.mockResolvedValue({ status: 'found', prospectId: 'p1' });
       createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
       await POST(req(valid));
-      await runAfter();
       expect(logLeadToDb).toHaveBeenCalledWith(
         expect.objectContaining({ kind: 'existing', outcome: 'activity_logged', prospectId: 'p1', activityEvent: 232 }),
       );
@@ -120,15 +109,14 @@ describe('POST /api/lead', () => {
 
     it('logs LSQ failures with the error (the backfill record)', async () => {
       createLeadWithActivity.mockResolvedValue({ ok: false, status: 500, detail: 'boom' });
-      await POST(req(valid));
-      await runAfter();
+      const res = await POST(req(valid));
+      expect(res.status).toBe(502);
       expect(logLeadToDb).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'failed', lsqStatus: 500, error: 'boom' }));
     });
 
     it('does not log invalid or honeypot submissions', async () => {
       await POST(req({ ...valid, phone: '1' }));
       await POST(req({ ...valid, website: 'x' }));
-      await runAfter();
       expect(logLeadToDb).not.toHaveBeenCalled();
     });
   });
