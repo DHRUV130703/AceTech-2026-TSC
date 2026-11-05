@@ -3,13 +3,41 @@
 import { useEffect, useRef, useState } from 'react';
 import { leadSchema, fieldErrors, type LeadField, type LeadInput } from '@/lib/lead-schema';
 
-type Status = 'idle' | 'submitting' | 'success';
+type Status = 'idle' | 'submitting' | 'success' | 'existing';
+
+const COPY = {
+  success: {
+    heading: 'Thank you for visiting us at The Sleep Company – AceTech Event 2026',
+    body: ['Our team will get in touch with you shortly.'],
+  },
+  existing: {
+    heading: (first: string) => `Welcome back${first ? `, ${first}` : ''}!`,
+    body: [
+      "Looks like you're already part of The Sleep Company family — we have your details with us.",
+      'Thank you for stopping by at AceTech 2026. Our team will reach out to you shortly.',
+    ],
+  },
+} as const;
+
+const firstName = (name: string) => {
+  const f = name.trim().split(/\s+/)[0] ?? '';
+  return f ? f.charAt(0).toUpperCase() + f.slice(1).toLowerCase() : '';
+};
 type Errors = Partial<Record<LeadField, string>>;
 
-const FIELDS: { key: LeadField; label: string; type: string; autoComplete: string; inputMode?: 'numeric' | 'text'; placeholder: string }[] = [
-  { key: 'name', label: 'Full Name', type: 'text', autoComplete: 'name', placeholder: 'e.g. Priya Sharma' },
-  { key: 'phone', label: 'Phone Number', type: 'tel', autoComplete: 'tel-national', inputMode: 'numeric', placeholder: '10-digit mobile number' },
-  { key: 'organisation', label: 'Organisation / Firm', type: 'text', autoComplete: 'organization', placeholder: 'e.g. Studio Design Co.' },
+const FIELDS: {
+  key: LeadField;
+  label: string;
+  type: string;
+  autoComplete: string;
+  inputMode?: 'numeric' | 'text';
+  placeholder: string;
+  enterKeyHint: 'next' | 'done';
+  autoCapitalize: 'words' | 'off';
+}[] = [
+  { key: 'name', label: 'Full Name', type: 'text', autoComplete: 'name', placeholder: 'e.g. Priya Sharma', enterKeyHint: 'next', autoCapitalize: 'words' },
+  { key: 'phone', label: 'Phone Number', type: 'tel', autoComplete: 'tel-national', inputMode: 'numeric', placeholder: '10-digit mobile', enterKeyHint: 'next', autoCapitalize: 'off' },
+  { key: 'organisation', label: 'Organisation / Firm', type: 'text', autoComplete: 'organization', placeholder: 'e.g. Studio Design Co.', enterKeyHint: 'done', autoCapitalize: 'words' },
 ];
 
 export function LeadForm() {
@@ -22,7 +50,10 @@ export function LeadForm() {
   const thanksHeading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    if (status === 'success') thanksHeading.current?.focus();
+    if (status === 'success' || status === 'existing') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      thanksHeading.current?.focus({ preventScroll: true });
+    }
   }, [status]);
 
   function validateField(key: LeadField) {
@@ -57,7 +88,7 @@ export function LeadForm() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
-        setStatus('success');
+        setStatus(data.existing ? 'existing' : 'success');
         return;
       }
       setStatus('idle');
@@ -75,18 +106,31 @@ export function LeadForm() {
     }
   }
 
-  if (status === 'success') {
+  if (status === 'success' || status === 'existing') {
+    const existing = status === 'existing';
+    const heading = existing ? COPY.existing.heading(firstName(values.name)) : COPY.success.heading;
+    const body = existing ? COPY.existing.body : COPY.success.body;
     return (
-      <section className="animate-pop-in rounded-2xl bg-white p-7 text-center shadow-[0_12px_36px_rgb(31_42_76/0.14)]">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-success/10">
-          <svg viewBox="0 0 24 24" className="h-9 w-9 text-success" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
-            <path d="M5 12.5l4.5 4.5L19 7.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+      <section className="animate-pop-in rounded-2xl bg-white px-5 py-7 text-center shadow-[0_12px_36px_rgb(31_42_76/0.14)] sm:px-7">
+        <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full ${existing ? 'bg-aqua-200/60' : 'bg-success/10'}`}>
+          {existing ? (
+            <svg viewBox="0 0 24 24" className="h-8 w-8 text-navy-900" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+              <path d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10z" strokeLinejoin="round" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" className="h-9 w-9 text-success" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+              <path d="M5 12.5l4.5 4.5L19 7.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
         </div>
-        <h1 ref={thanksHeading} tabIndex={-1} className="mt-5 text-[22px] leading-snug font-extrabold outline-none">
-          Thank you for visiting us at The Sleep Company – AceTech Event 2026
+        <h1 ref={thanksHeading} tabIndex={-1} className="mt-5 text-[22px] leading-snug font-extrabold text-balance outline-none">
+          {heading}
         </h1>
-        <p className="mt-3 text-base text-navy-800">Our team will get in touch with you shortly.</p>
+        {body.map((line) => (
+          <p key={line} className="mt-3 text-base text-pretty text-navy-800">
+            {line}
+          </p>
+        ))}
 
         <div className="mt-6 rounded-xl bg-aqua-50 p-4 text-left text-sm">
           <p className="font-semibold">Need help sooner? Talk to our Sleep Expert</p>
@@ -124,7 +168,7 @@ export function LeadForm() {
         <p className="inline-block rounded-full bg-navy-900 px-3.5 py-1 text-[11px] font-bold tracking-[0.25em] text-white uppercase">
           AceTech 2026
         </p>
-        <h1 className="mt-4 text-[26px] leading-tight font-extrabold tracking-wide uppercase">
+        <h1 className="mt-4 text-[22px] leading-tight font-extrabold tracking-wide uppercase min-[360px]:text-[26px]">
           Welcome to
           <br />
           The Sleep Company
@@ -137,7 +181,7 @@ export function LeadForm() {
       <form
         noValidate
         onSubmit={onSubmit}
-        className="mt-7 rounded-2xl bg-white p-6 shadow-[0_12px_36px_rgb(31_42_76/0.14)]"
+        className="mt-7 rounded-2xl bg-white p-5 shadow-[0_12px_36px_rgb(31_42_76/0.14)] min-[360px]:p-6"
         aria-describedby={formError ? 'form-error' : undefined}
       >
         {FIELDS.map((f) => {
@@ -167,6 +211,18 @@ export function LeadForm() {
                   type={f.type}
                   inputMode={f.inputMode}
                   autoComplete={f.autoComplete}
+                  autoCapitalize={f.autoCapitalize}
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint={f.enterKeyHint}
+                  onKeyDown={(e) => {
+                    // "Next" on the mobile keyboard moves to the following field instead of submitting.
+                    if (e.key === 'Enter' && f.enterKeyHint === 'next') {
+                      e.preventDefault();
+                      const i = FIELDS.findIndex((x) => x.key === f.key);
+                      inputs.current[FIELDS[i + 1].key]?.focus();
+                    }
+                  }}
                   placeholder={f.placeholder}
                   maxLength={f.key === 'phone' ? 15 : f.key === 'name' ? 60 : 100}
                   value={values[f.key]}

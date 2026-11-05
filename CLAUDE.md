@@ -15,12 +15,19 @@ Read this file before you change anything in this repo. It is the source of trut
 **User flow (single page, two states):**
 
 ```
-Scan QR ──▶ Landing / Form ──submit──▶ POST /api/lead ──▶ LeadSquared
-                  │                         │
-                  │◀──── error (inline) ────┤
-                  ▼                         ▼
-              (retry)                 Thank-you state
+Scan QR ──▶ Landing / Form ──submit──▶ POST /api/lead
+                  ▲                         │
+                  │                         ▼
+                  │            1. LSQ RetrieveLeadByPhoneNumber
+                  │                ├─ found ─────────▶ "Welcome back" state (NO lead/activity written)
+                  │                ├─ not found ─┐
+                  │                └─ lookup failed ─┤ (fail-open: never lose a lead)
+                  │                                  ▼
+                  │            2. LSQ CreateCustom (lead + activity) ──▶ Thank-you state
+                  └──── error (inline, form keeps input, retry) ◀── LSQ failure
 ```
+
+**Duplicate rule (in scope):** before creating anything, look the phone number up in LeadSquared. If a lead with that phone **already exists**, don't create a lead and **don't log an activity**. Show the "already with us" state instead. Only if the lookup *errors* (timeout/5xx) do we fall through to create, because a possible duplicate is better than a lost lead.
 
 **Form fields (all required):**
 
@@ -33,7 +40,14 @@ Scan QR ──▶ Landing / Form ──submit──▶ POST /api/lead ──▶ 
 **Success copy (exact):**
 > **Thank you for visiting us at The Sleep Company – AceTech Event 2026**
 
-Below it, a short secondary line, e.g. "Our team will get in touch with you shortly." Also show the brochure contact details: Sleep Expert **+91 98119 81911**, **care@thesleepcompany.in**, and **thesleepcompany.in**.
+Below it, a short secondary line, e.g. "Our team will get in touch with you shortly."
+
+**Existing-lead copy (phone already in LSQ), in `components/LeadForm.tsx` `COPY.existing`:**
+> **Welcome back, {FirstName}!**
+> Looks like you're already part of The Sleep Company family — we have your details with us.
+> Thank you for stopping by at AceTech 2026. Our team will reach out to you shortly.
+
+It uses a heart icon (navy on aqua) instead of the green check, and the same contact block. Also show the brochure contact details: Sleep Expert **+91 98119 81911**, **care@thesleepcompany.in**, and **thesleepcompany.in**.
 
 **Success metrics.** Fewer than 20 seconds from scan to submit. Zero lost leads. At least 99% of submissions reach LSQ, with the rest recoverable from logs.
 
@@ -66,7 +80,18 @@ scripts/generate-qr.ts   # print-ready QR (SVG + PNG)
 
 ## 3. LeadSquared integration (server only)
 
-**Endpoint**
+**Step 1: duplicate check (`findLeadByPhone`)**
+```
+GET https://{LSQ_HOST}/v2/LeadManagement.svc/RetrieveLeadByPhoneNumber?phone={10-digit phone}
+x-LSQ-AccessKey: {LSQ_ACCESS_KEY}
+x-LSQ-SecretKey: {LSQ_SECRET_KEY}
+```
+- It returns a JSON **array**: `[]` means not found, otherwise lead objects with `ProspectID`, `Phone`, `Mobile`, and so on.
+- LSQ stores phones as `+91-XXXXXXXXXX`, so we treat it as a match only when the last 10 digits of `Phone`/`Mobile` equal the input.
+- Timeout is 5s. Any error returns `unknown`, which falls through to create (fail-open).
+- It uses header auth, so the keys stay out of the URL.
+
+**Step 2: create (`createLeadWithActivity`), only when not found**
 ```
 POST https://{LSQ_HOST}/v2/ProspectActivity.svc/CreateCustom?accessKey={LSQ_ACCESS_KEY}&secretKey={LSQ_SECRET_KEY}
 Content-Type: application/json
@@ -107,7 +132,8 @@ Content-Type: application/json
 - Request: `{ name, phone, organisation, website /* honeypot */ }`
 - Re-validate with the shared zod schema. Never trust client validation.
 - Responses:
-  - `200 { ok: true }`: LSQ returned success.
+  - `200 { ok: true, existing: false }`: new lead created in LSQ.
+  - `200 { ok: true, existing: true }`: phone already in LSQ, nothing written. The UI shows the "Welcome back" state.
   - `400 { ok: false, error: "validation", fields: {...} }`: invalid input.
   - `502 { ok: false, error: "upstream" }`: LSQ failed. **Log the full normalised lead server-side** so it can be re-pushed manually. This is the "zero lost leads" guarantee.
 - Timeout for the LSQ call is 10s, with **one** retry on network error or 5xx. Never retry on a 4xx.

@@ -4,7 +4,7 @@ import { LeadForm } from '@/components/LeadForm';
 export default function Home() {
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="bg-navy-900 py-5">
+      <header className="bg-navy-900 pt-[max(1.25rem,env(safe-area-inset-top))] pb-5">
         <div className="mx-auto flex max-w-[440px] justify-center px-4">
           <Logo />
         </div>
@@ -17,7 +17,7 @@ export default function Home() {
         </div>
       </main>
 
-      <footer className="bg-navy-900 px-4 py-5 text-center">
+      <footer className="bg-navy-900 px-4 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-center">
         <p className="text-balance text-[10px] font-bold tracking-[0.05em] text-white uppercase sm:text-[11px] sm:tracking-[0.12em]">
           Mattress | Chair | Recliner Bed | Recliner Sofa | Pillow
         </p>

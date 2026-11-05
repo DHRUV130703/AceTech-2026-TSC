@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { leadSchema, fieldErrors, maskPhone } from '@/lib/lead-schema';
-import { createLeadWithActivity, fingerprint, readConfig } from '@/lib/leadsquared';
+import { createLeadWithActivity, findLeadByPhone, fingerprint, readConfig, type LookupResult } from '@/lib/leadsquared';
 import { rateLimit } from '@/lib/rate-limit';
 
 export async function POST(req: Request) {
@@ -32,6 +32,26 @@ export async function POST(req: Request) {
   }
 
   const lead = parsed.data;
+
+  // 1. Existing lead? Then don't create a lead or log an activity in LSQ.
+  //    If the lookup itself fails, fall through and create — never lose a lead.
+  let lookup: LookupResult;
+  try {
+    lookup = await findLeadByPhone(lead.phone);
+  } catch (err) {
+    lookup = { status: 'unknown', detail: err instanceof Error ? err.message : 'config error' };
+  }
+  if (lookup.status === 'found') {
+    console.info(
+      JSON.stringify({ ts: new Date().toISOString(), phoneMasked: maskPhone(lead.phone), organisation: lead.organisation, outcome: 'existing', prospectId: lookup.prospectId }),
+    );
+    return NextResponse.json({ ok: true, existing: true });
+  }
+  if (lookup.status === 'unknown') {
+    console.warn(JSON.stringify({ ts: new Date().toISOString(), phoneMasked: maskPhone(lead.phone), outcome: 'lookup_failed', detail: lookup.detail }));
+  }
+
+  // 2. New lead → create lead + activity.
   let result;
   try {
     result = await createLeadWithActivity(lead);
@@ -42,7 +62,7 @@ export async function POST(req: Request) {
   const base = { ts: new Date().toISOString(), phoneMasked: maskPhone(lead.phone), organisation: lead.organisation, lsqStatus: result.status };
   if (result.ok) {
     console.info(JSON.stringify({ ...base, outcome: 'created' }));
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, existing: false });
   }
 
   // On auth failure, log non-reversible key fingerprints to diagnose misconfigured env vars.

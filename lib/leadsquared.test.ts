@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildPayload, cleanCredential, createLeadWithActivity, formatUtc, readConfig, redact } from './leadsquared';
+import { buildPayload, cleanCredential, createLeadWithActivity, findLeadByPhone, formatUtc, readConfig, redact } from './leadsquared';
 
 const lead = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co' };
 const config = { host: 'api.test', accessKey: 'AK$1', secretKey: 'SK', activityEvent: 231 };
@@ -61,6 +61,36 @@ describe('createLeadWithActivity', () => {
   it('treats 200 with Status=Error as failure', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(res(200, '{"Status":"Error","ExceptionMessage":"x"}'));
     expect((await createLeadWithActivity(lead, { config, now, fetchImpl })).ok).toBe(false);
+  });
+});
+
+describe('findLeadByPhone', () => {
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+  it('calls RetrieveLeadByPhoneNumber with header auth (no keys in URL)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json([]));
+    await findLeadByPhone('9876543210', { config, fetchImpl });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://api.test/v2/LeadManagement.svc/RetrieveLeadByPhoneNumber?phone=9876543210');
+    expect(url).not.toMatch(/Key/);
+    expect(init.headers).toEqual({ 'x-LSQ-AccessKey': 'AK$1', 'x-LSQ-SecretKey': 'SK' });
+  });
+
+  it('found when a returned lead matches on last 10 digits', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(json([{ ProspectID: 'p1', Phone: '+91-9876543210' }]));
+    expect(await findLeadByPhone('9876543210', { config, fetchImpl })).toEqual({ status: 'found', prospectId: 'p1' });
+  });
+
+  it('not_found on empty array or non-matching phone', async () => {
+    expect(await findLeadByPhone('9876543210', { config, fetchImpl: vi.fn().mockResolvedValue(json([])) })).toEqual({ status: 'not_found' });
+    const other = vi.fn().mockResolvedValue(json([{ Phone: '+91-9876543211' }]));
+    expect(await findLeadByPhone('9876543210', { config, fetchImpl: other })).toEqual({ status: 'not_found' });
+  });
+
+  it('unknown on HTTP error, bad JSON or network failure', async () => {
+    expect((await findLeadByPhone('9876543210', { config, fetchImpl: vi.fn().mockResolvedValue(json({}, 500)) })).status).toBe('unknown');
+    expect((await findLeadByPhone('9876543210', { config, fetchImpl: vi.fn().mockResolvedValue(new Response('<html>')) })).status).toBe('unknown');
+    expect((await findLeadByPhone('9876543210', { config, fetchImpl: vi.fn().mockRejectedValue(new Error('x')) })).status).toBe('unknown');
   });
 });
 

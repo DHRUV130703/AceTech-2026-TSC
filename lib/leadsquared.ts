@@ -97,6 +97,41 @@ async function attempt(url: string, body: string, fetchImpl: typeof fetch): Prom
   }
 }
 
+export type LookupResult =
+  | { status: 'found'; prospectId: string | null }
+  | { status: 'not_found' }
+  | { status: 'unknown'; detail: string }; // lookup failed — caller should fall through to create
+
+const LOOKUP_TIMEOUT_MS = 5_000;
+
+/**
+ * Checks whether a lead with this phone already exists in LSQ.
+ * Uses header auth (keys never in the URL). LSQ stores phones as "+91-XXXXXXXXXX",
+ * so we match on the last 10 digits to guard against loose matching.
+ */
+export async function findLeadByPhone(
+  phone: string,
+  { config = readConfig(), fetchImpl = fetch }: { config?: Config; fetchImpl?: typeof fetch } = {},
+): Promise<LookupResult> {
+  const url = `https://${config.host}/v2/LeadManagement.svc/RetrieveLeadByPhoneNumber?phone=${encodeURIComponent(phone)}`;
+  try {
+    const res = await fetchImpl(url, {
+      headers: { 'x-LSQ-AccessKey': config.accessKey, 'x-LSQ-SecretKey': config.secretKey },
+      signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
+    });
+    const text = await res.text();
+    if (!res.ok) return { status: 'unknown', detail: `HTTP ${res.status}: ${redact(text.slice(0, 300))}` };
+    const data = JSON.parse(text);
+    if (!Array.isArray(data)) return { status: 'unknown', detail: redact(text.slice(0, 300)) };
+    const match = data.find((l: Record<string, unknown>) =>
+      [l?.Phone, l?.Mobile].some((p) => typeof p === 'string' && p.replace(/\D/g, '').slice(-10) === phone),
+    );
+    return match ? { status: 'found', prospectId: (match.ProspectID as string) ?? null } : { status: 'not_found' };
+  } catch (err) {
+    return { status: 'unknown', detail: redact(err instanceof Error ? err.message : String(err)) };
+  }
+}
+
 /** POSTs to LSQ CreateCustom. One retry on network error / 5xx; never on 4xx. */
 export async function createLeadWithActivity(
   lead: Lead,
