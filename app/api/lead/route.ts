@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { leadSchema, fieldErrors, maskPhone } from '@/lib/lead-schema';
-import { createLeadWithActivity } from '@/lib/leadsquared';
+import { createLeadWithActivity, fingerprint, readConfig } from '@/lib/leadsquared';
 import { rateLimit } from '@/lib/rate-limit';
 
 export async function POST(req: Request) {
@@ -45,7 +45,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  // On auth failure, log non-reversible key fingerprints to diagnose misconfigured env vars.
+  let creds: unknown;
+  if (result.status === 401) {
+    try {
+      const c = readConfig();
+      creds = { host: c.host, accessKey: await fingerprint(c.accessKey), secretKey: await fingerprint(c.secretKey) };
+    } catch {
+      creds = 'missing';
+    }
+  }
+
   // Full lead logged ONLY on failure so it can be backfilled manually into LSQ.
-  console.error(JSON.stringify({ ...base, outcome: 'upstream_failed', detail: result.detail, backfill: lead }));
+  console.error(JSON.stringify({ ...base, outcome: 'upstream_failed', detail: result.detail, creds, backfill: lead }));
   return NextResponse.json({ ok: false, error: 'upstream' }, { status: 502 });
 }

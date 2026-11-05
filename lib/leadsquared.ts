@@ -56,6 +56,14 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return { host, accessKey, secretKey, activityEvent: Number.isFinite(activityEvent) ? activityEvent : 231 };
 }
 
+/** Non-reversible fingerprint of a credential for diagnosing auth failures in logs. */
+export async function fingerprint(v: string | undefined) {
+  if (!v) return { len: 0 };
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v));
+  const hex = [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return { len: v.length, sha8: hex.slice(0, 8), hasDollar: v.includes('$'), hasPercent: v.includes('%'), hasSpace: /\s/.test(v) };
+}
+
 const TIMEOUT_MS = 10_000;
 
 /** Removes credentials from any string before it is logged. */

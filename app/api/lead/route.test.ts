@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createLeadWithActivity = vi.fn();
-vi.mock('@/lib/leadsquared', () => ({ createLeadWithActivity: (...a: unknown[]) => createLeadWithActivity(...a) }));
+vi.mock('@/lib/leadsquared', () => ({
+  createLeadWithActivity: (...a: unknown[]) => createLeadWithActivity(...a),
+  readConfig: () => ({ host: 'h', accessKey: 'a', secretKey: 's', activityEvent: 231 }),
+  fingerprint: async (v: string) => ({ len: v.length }),
+}));
 
 const { POST } = await import('./route');
 
