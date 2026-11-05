@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildPayload, createLeadWithActivity, formatUtc, redact } from './leadsquared';
+import { buildPayload, cleanCredential, createLeadWithActivity, formatUtc, readConfig, redact } from './leadsquared';
 
 const lead = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co' };
 const config = { host: 'api.test', accessKey: 'AK$1', secretKey: 'SK', activityEvent: 231 };
@@ -61,6 +61,17 @@ describe('createLeadWithActivity', () => {
   it('treats 200 with Status=Error as failure', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(res(200, '{"Status":"Error","ExceptionMessage":"x"}'));
     expect((await createLeadWithActivity(lead, { config, now, fetchImpl })).ok).toBe(false);
+  });
+});
+
+describe('readConfig', () => {
+  it('decodes URL-encoded keys and trims quotes/whitespace/host scheme', () => {
+    const c = readConfig({ LSQ_HOST: ' https://api.test/ ', LSQ_ACCESS_KEY: ' "u%24abc" ', LSQ_SECRET_KEY: 'sk\n' } as unknown as NodeJS.ProcessEnv);
+    expect(c).toMatchObject({ host: 'api.test', accessKey: 'u$abc', secretKey: 'sk', activityEvent: 231 });
+  });
+
+  it('leaves plain keys untouched', () => {
+    expect(cleanCredential('u$abc')).toBe('u$abc');
   });
 });
 

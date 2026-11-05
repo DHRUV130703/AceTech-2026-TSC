@@ -30,10 +30,27 @@ export type LsqResult = { ok: true; status: number } | { ok: false; status: numb
 
 type Config = { host: string; accessKey: string; secretKey: string; activityEvent: number };
 
+/**
+ * Normalises a credential pasted into a dashboard: trims whitespace/quotes and
+ * decodes URL-encoding (keys copied from a cURL URL arrive as `u%24…` instead of `u$…`).
+ */
+export function cleanCredential(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  let v = raw.trim().replace(/^['"]|['"]$/g, '').trim();
+  if (/%[0-9A-Fa-f]{2}/.test(v)) {
+    try {
+      v = decodeURIComponent(v);
+    } catch {
+      /* leave as-is */
+    }
+  }
+  return v;
+}
+
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const host = env.LSQ_HOST;
-  const accessKey = env.LSQ_ACCESS_KEY;
-  const secretKey = env.LSQ_SECRET_KEY;
+  const host = cleanCredential(env.LSQ_HOST)?.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  const accessKey = cleanCredential(env.LSQ_ACCESS_KEY);
+  const secretKey = cleanCredential(env.LSQ_SECRET_KEY);
   if (!host || !accessKey || !secretKey) throw new Error('LeadSquared env vars are not configured');
   const activityEvent = Number(env.LSQ_ACTIVITY_EVENT ?? 231);
   return { host, accessKey, secretKey, activityEvent: Number.isFinite(activityEvent) ? activityEvent : 231 };
