@@ -36,7 +36,8 @@ type Config = { host: string; accessKey: string; secretKey: string; activityEven
  */
 export function cleanCredential(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
-  let v = raw.trim().replace(/^['"]|['"]$/g, '').trim();
+  // `\$` comes from copying a dotenv-escaped value (.env.local) into a dashboard.
+  let v = raw.trim().replace(/^['"]|['"]$/g, '').trim().replace(/\\\$/g, '$');
   if (/%[0-9A-Fa-f]{2}/.test(v)) {
     try {
       v = decodeURIComponent(v);

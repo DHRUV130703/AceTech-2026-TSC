@@ -70,6 +70,10 @@ describe('readConfig', () => {
     expect(c).toMatchObject({ host: 'api.test', accessKey: 'u$abc', secretKey: 'sk', activityEvent: 231 });
   });
 
+  it('strips dotenv backslash escaping before $', () => {
+    expect(cleanCredential('u\\$abc')).toBe('u$abc');
+  });
+
   it('leaves plain keys untouched', () => {
     expect(cleanCredential('u$abc')).toBe('u$abc');
   });
