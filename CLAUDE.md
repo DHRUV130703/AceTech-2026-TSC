@@ -192,7 +192,7 @@ npm run qr -- https://tsc-acetech-2026.vercel.app   # print QR + poster → publ
 vercel deploy --prod --yes                          # project: dhruvs-projects-3e416bab/tsc-acetech-2026
 ```
 
-**Production:** https://tsc-acetech-2026.vercel.app. LSQ env vars are set in Vercel (Production and Development; Preview is not set yet).
+**Production:** https://tsc-acetech-2026.vercel.app. LSQ env vars are set in Vercel (Production, Preview and Development).
 
 **Git → Vercel:** the GitHub repo `DHRUV130703/AceTech-2026-TSC` is connected. Every push to `main` deploys to production automatically, and other branches get preview URLs. Run tests and the build before pushing to `main`.
 
