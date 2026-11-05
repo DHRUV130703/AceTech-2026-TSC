@@ -101,6 +101,7 @@ Content-Type: application/json
 - Env vars: `LSQ_HOST` (e.g. `api-in21.leadsquared.com`), `LSQ_ACCESS_KEY`, `LSQ_SECRET_KEY`, `LSQ_ACTIVITY_EVENT`.
 - Keep a `.env.example` with these keys set to empty values. Make sure `.gitignore` covers `.env*.local`.
 - When you log request URLs or errors, redact `accessKey` and `secretKey`.
+- The access key contains a literal `$`. In `.env.local` it must be escaped as `\$`, but in the **Vercel dashboard** enter it unescaped (`u$…`). `readConfig()` tolerates `\$`, `%24`, quotes and whitespace. If LSQ ever returns 401 "Invalid User Details", the error log includes a `creds` fingerprint (length + sha256 prefix) to compare against the expected key.
 
 ### API route contract: `POST /api/lead`
 - Request: `{ name, phone, organisation, website /* honeypot */ }`
