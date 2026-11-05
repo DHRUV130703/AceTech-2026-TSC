@@ -1,11 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const afterCallbacks: Array<() => unknown> = [];
+vi.mock('next/server', async (orig) => ({
+  ...(await orig<typeof import('next/server')>()),
+  after: (fn: () => unknown) => afterCallbacks.push(fn),
+}));
+const logLeadToDb = vi.fn().mockResolvedValue(true);
+vi.mock('@/lib/lead-log', () => ({ logLeadToDb: (...a: unknown[]) => logLeadToDb(...a) }));
+const runAfter = async () => {
+  for (const fn of afterCallbacks.splice(0)) await fn();
+};
+
 const createLeadWithActivity = vi.fn();
 const findLeadByPhone = vi.fn();
 vi.mock('@/lib/leadsquared', () => ({
   createLeadWithActivity: (...a: unknown[]) => createLeadWithActivity(...a),
   findLeadByPhone: (...a: unknown[]) => findLeadByPhone(...a),
-  readConfig: () => ({ host: 'h', accessKey: 'a', secretKey: 's', activityEvent: 231 }),
+  readConfig: () => ({ host: 'h', accessKey: 'a', secretKey: 's', activityEvent: 231, existingActivityEvent: 232 }),
   fingerprint: async (v: string) => ({ len: v.length }),
 }));
 
@@ -24,6 +35,8 @@ const valid = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio
 describe('POST /api/lead', () => {
   beforeEach(() => {
     createLeadWithActivity.mockReset();
+    logLeadToDb.mockClear();
+    afterCallbacks.length = 0;
     findLeadByPhone.mockReset().mockResolvedValue({ status: 'not_found' });
     vi.spyOn(console, 'info').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -82,6 +95,42 @@ describe('POST /api/lead', () => {
     const res = await POST(req({ ...valid, website: 'spam.com' }));
     expect(res.status).toBe(200);
     expect(createLeadWithActivity).not.toHaveBeenCalled();
+  });
+
+  describe('Postgres log', () => {
+    it('logs a new lead after the response', async () => {
+      createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
+      await POST(req(valid));
+      expect(logLeadToDb).not.toHaveBeenCalled(); // deferred via after()
+      await runAfter();
+      expect(logLeadToDb).toHaveBeenCalledWith(
+        expect.objectContaining({ lead: valid, kind: 'new', outcome: 'created', lsqStatus: 200, activityEvent: 231 }),
+      );
+    });
+
+    it('logs an existing lead with prospect id and activity 232', async () => {
+      findLeadByPhone.mockResolvedValue({ status: 'found', prospectId: 'p1' });
+      createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
+      await POST(req(valid));
+      await runAfter();
+      expect(logLeadToDb).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'existing', outcome: 'activity_logged', prospectId: 'p1', activityEvent: 232 }),
+      );
+    });
+
+    it('logs LSQ failures with the error (the backfill record)', async () => {
+      createLeadWithActivity.mockResolvedValue({ ok: false, status: 500, detail: 'boom' });
+      await POST(req(valid));
+      await runAfter();
+      expect(logLeadToDb).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'failed', lsqStatus: 500, error: 'boom' }));
+    });
+
+    it('does not log invalid or honeypot submissions', async () => {
+      await POST(req({ ...valid, phone: '1' }));
+      await POST(req({ ...valid, website: 'x' }));
+      await runAfter();
+      expect(logLeadToDb).not.toHaveBeenCalled();
+    });
   });
 
   it('returns 400 on malformed JSON', async () => {

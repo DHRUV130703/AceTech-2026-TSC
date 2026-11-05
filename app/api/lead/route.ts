@@ -1,7 +1,17 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { leadSchema, fieldErrors, maskPhone } from '@/lib/lead-schema';
 import { createLeadWithActivity, findLeadByPhone, fingerprint, readConfig, type LeadKind, type LookupResult } from '@/lib/leadsquared';
+import { logLeadToDb } from '@/lib/lead-log';
 import { rateLimit } from '@/lib/rate-limit';
+
+function activityEventFor(kind: LeadKind): number | undefined {
+  try {
+    const c = readConfig();
+    return kind === 'new' ? c.activityEvent : c.existingActivityEvent;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function POST(req: Request) {
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
@@ -55,16 +65,34 @@ export async function POST(req: Request) {
     result = { ok: false as const, status: null, detail: err instanceof Error ? err.message : 'config error' };
   }
 
+  const prospectId = lookup.status === 'found' ? lookup.prospectId : undefined;
+  const outcome = result.ok ? (kind === 'new' ? 'created' : 'activity_logged') : 'failed';
+
+  // 3. Secondary record in Postgres — after the response is sent, so it adds no latency
+  //    and can never break the visitor's flow.
+  after(() =>
+    logLeadToDb({
+      lead,
+      kind,
+      outcome,
+      lsqStatus: result.status,
+      prospectId,
+      activityEvent: activityEventFor(kind),
+      error: result.ok ? undefined : result.detail,
+      userAgent: req.headers.get('user-agent'),
+    }),
+  );
+
   const base = {
     ts: new Date().toISOString(),
     kind,
     phoneMasked: maskPhone(lead.phone),
     organisation: lead.organisation,
-    prospectId: lookup.status === 'found' ? lookup.prospectId : undefined,
+    prospectId,
     lsqStatus: result.status,
   };
   if (result.ok) {
-    console.info(JSON.stringify({ ...base, outcome: kind === 'new' ? 'created' : 'activity_logged' }));
+    console.info(JSON.stringify({ ...base, outcome }));
     return NextResponse.json({ ok: true, existing: kind === 'existing' });
   }
 

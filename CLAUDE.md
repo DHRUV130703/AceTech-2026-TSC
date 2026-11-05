@@ -235,6 +235,27 @@ Error copy should be short and human, e.g. "Please enter a valid 10-digit mobile
 
 ---
 
+## 6a. Postgres lead log (secondary record)
+
+Every **valid** submission is also written to **Aiven Postgres** (table `acetech_leads`, schema in `db/schema.sql`). This record is independent of LeadSquared, for reporting and for backfill. LSQ stays the system of record.
+
+- One row per submission. `lead_kind` is `new` or `existing`. `lsq_outcome` is `created`, `activity_logged` or `failed`. The row also stores `lsq_status`, `lsq_prospect_id`, `lsq_activity_event` (231/232), the redacted `lsq_error`, `user_agent`, and `created_at` (UTC).
+- Invalid submissions and honeypot hits are **not** logged.
+- The insert runs in `after()` (`next/server`), after the response is sent. It adds no latency and **never** affects the visitor. If the DB is down, `db_insert_failed` is logged with the full lead.
+- Rows with `lsq_outcome = 'failed'` are the backfill list. Export them with `npm run leads:export -- failed`.
+- Connection: `DATABASE_URL` (server-only). The pool uses `max: 3`, because the Aiven plan allows only 15 connections. TLS is always on. Set `DATABASE_CA_CERT` (the Aiven project CA, PEM) to verify the server cert; otherwise it encrypts without verifying, the same as `sslmode=require`.
+- `npm run db:migrate` applies the schema (idempotent). `npm run leads:export` writes a CSV to `exports/` (git-ignored, times in IST).
+- Phone numbers are PII. Never log them unmasked except in failure/backfill lines, and never commit exports.
+
+Useful queries:
+```sql
+SELECT count(*) total, count(*) FILTER (WHERE lead_kind='new') new_leads,
+       count(*) FILTER (WHERE lead_kind='existing') repeat_visits,
+       count(*) FILTER (WHERE lsq_outcome='failed') lsq_failed
+  FROM acetech_leads;
+SELECT * FROM acetech_leads WHERE lsq_outcome = 'failed' ORDER BY created_at;
+```
+
 ## 7. Commands and workflow
 
 ```bash
