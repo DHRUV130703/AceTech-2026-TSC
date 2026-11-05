@@ -1,4 +1,5 @@
 import 'server-only';
+import type { Pool } from 'pg';
 import { getPool } from './db';
 import type { Lead } from './lead-schema';
 import type { LeadKind } from './leadsquared';
@@ -22,7 +23,16 @@ export const INSERT_SQL = `INSERT INTO acetech_leads
  * Writes one row per valid submission to Postgres. Never throws: the DB is a secondary record
  * and must never break the visitor's flow. Failures are logged (with the full lead) for backfill.
  */
-export async function logLeadToDb(entry: LeadLogEntry, pool = getPool()): Promise<boolean> {
+export async function logLeadToDb(entry: LeadLogEntry, injected?: Pick<Pool, 'query'> | null): Promise<boolean> {
+  let pool: Pick<Pool, 'query'> | null;
+  try {
+    pool = injected !== undefined ? injected : getPool();
+  } catch (err) {
+    console.error(
+      JSON.stringify({ outcome: 'db_config_invalid', detail: err instanceof Error ? err.message : String(err), backfill: entry.lead, kind: entry.kind, lsqOutcome: entry.outcome }),
+    );
+    return false;
+  }
   if (!pool) {
     console.warn(JSON.stringify({ outcome: 'db_not_configured', hasEnv: process.env.DATABASE_URL !== undefined, envLen: process.env.DATABASE_URL?.length ?? 0 }));
     return false;

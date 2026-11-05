@@ -45,6 +45,16 @@ describe('poolConfig', () => {
     expect(c.max).toBeLessThanOrEqual(3);
   });
 
+  it('accepts the Aiven Quick-connect psql form and quotes', () => {
+    for (const v of [`psql '${url}'`, `"${url}"`, ` ${url}\n`]) {
+      expect(poolConfig({ DATABASE_URL: v } as unknown as NodeJS.ProcessEnv)!.connectionString).toBe('postgres://u:p@db.example.com:26214/defaultdb');
+    }
+  });
+
+  it('throws a non-leaky error for a non-URI value', () => {
+    expect(() => poolConfig({ DATABASE_URL: 'AVNS_secret' } as unknown as NodeJS.ProcessEnv)).toThrow(/not a postgres:\/\/ URI \(len 11, starts "AVNS"\)/);
+  });
+
   it('verifies the server cert when DATABASE_CA_CERT is set', () => {
     const c = poolConfig({ DATABASE_URL: url, DATABASE_CA_CERT: 'line1\\nline2' } as unknown as NodeJS.ProcessEnv)!;
     expect(c.ssl).toEqual({ ca: 'line1\nline2', rejectUnauthorized: true });
