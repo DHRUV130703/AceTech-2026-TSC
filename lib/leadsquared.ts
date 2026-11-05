@@ -2,25 +2,51 @@ import 'server-only';
 import type { Lead } from './lead-schema';
 
 export const ACTIVITY_NOTE = 'Lead captured at AceTech 2026 via QR';
+export const EXISTING_ACTIVITY_NOTE = 'Existing lead visited AceTech 2026 booth (QR)';
+export const LEAD_SOURCE = 'AceTech 2026 QR';
+
+/** Fixed activity fields for a repeat visitor (activity 232), as configured by the LSQ admin. */
+export const EXISTING_ACTIVITY_FIELDS = [
+  { SchemaName: 'mx_Custom_32', Value: 'End Client' },
+  { SchemaName: 'mx_Custom_29', Value: 'Yes' },
+  { SchemaName: 'mx_Custom_13', Value: 'Mattress' },
+  { SchemaName: 'mx_Custom_1', Value: 'AceTech Event' },
+] as const;
+
+export type LeadKind = 'new' | 'existing';
 
 /** LeadSquared API datetimes are UTC, formatted `yyyy-MM-dd HH:mm:ss`. */
 export function formatUtc(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-export function buildPayload(lead: Lead, opts: { activityEvent: number; now: Date }) {
+/**
+ * new      → lead (FirstName, Source, Phone) + activity `activityEvent` (231) with Firm Name.
+ * existing → lead match (FirstName, Phone; Source NOT overwritten) + activity `activityEvent` (232)
+ *            with the fixed repeat-visit fields.
+ */
+export function buildPayload(lead: Lead, opts: { kind?: LeadKind; activityEvent: number; now: Date }) {
+  const kind = opts.kind ?? 'new';
+  const note = kind === 'new' ? ACTIVITY_NOTE : EXISTING_ACTIVITY_NOTE;
   return {
-    LeadDetails: [
-      { Attribute: 'FirstName', Value: lead.name },
-      { Attribute: 'Phone', Value: lead.phone },
-    ],
+    LeadDetails:
+      kind === 'new'
+        ? [
+            { Attribute: 'FirstName', Value: lead.name },
+            { Attribute: 'Source', Value: LEAD_SOURCE },
+            { Attribute: 'Phone', Value: lead.phone },
+          ]
+        : [
+            { Attribute: 'FirstName', Value: lead.name },
+            { Attribute: 'Phone', Value: lead.phone },
+          ],
     Activity: {
       ActivityEvent: opts.activityEvent,
-      ActivityNote: ACTIVITY_NOTE,
+      ActivityNote: note,
       ActivityDateTime: formatUtc(opts.now),
       Fields: [
-        { SchemaName: 'ActivityEvent_Note', Value: ACTIVITY_NOTE },
-        { SchemaName: 'mx_Custom_6', Value: lead.organisation },
+        { SchemaName: 'ActivityEvent_Note', Value: note },
+        ...(kind === 'new' ? [{ SchemaName: 'mx_Custom_6', Value: lead.organisation }] : EXISTING_ACTIVITY_FIELDS.map((f) => ({ ...f }))),
       ],
     },
   };
@@ -28,7 +54,7 @@ export function buildPayload(lead: Lead, opts: { activityEvent: number; now: Dat
 
 export type LsqResult = { ok: true; status: number } | { ok: false; status: number | null; detail: string };
 
-type Config = { host: string; accessKey: string; secretKey: string; activityEvent: number };
+type Config = { host: string; accessKey: string; secretKey: string; activityEvent: number; existingActivityEvent?: number };
 
 /**
  * Normalises a credential pasted into a dashboard: trims whitespace/quotes and
@@ -53,8 +79,17 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const accessKey = cleanCredential(env.LSQ_ACCESS_KEY);
   const secretKey = cleanCredential(env.LSQ_SECRET_KEY);
   if (!host || !accessKey || !secretKey) throw new Error('LeadSquared env vars are not configured');
-  const activityEvent = Number(env.LSQ_ACTIVITY_EVENT ?? 231);
-  return { host, accessKey, secretKey, activityEvent: Number.isFinite(activityEvent) ? activityEvent : 231 };
+  const num = (v: string | undefined, fallback: number) => {
+    const n = Number(v ?? fallback);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+  return {
+    host,
+    accessKey,
+    secretKey,
+    activityEvent: num(env.LSQ_ACTIVITY_EVENT, 231),
+    existingActivityEvent: num(env.LSQ_EXISTING_ACTIVITY_EVENT, 232),
+  };
 }
 
 /** Non-reversible fingerprint of a credential for diagnosing auth failures in logs. */
@@ -132,15 +167,24 @@ export async function findLeadByPhone(
   }
 }
 
-/** POSTs to LSQ CreateCustom. One retry on network error / 5xx; never on 4xx. */
+/**
+ * POSTs to LSQ CreateCustom. One retry on network error / 5xx; never on 4xx.
+ * kind 'new' → creates lead + activity 231; kind 'existing' → logs activity 232 on the existing lead.
+ */
 export async function createLeadWithActivity(
   lead: Lead,
-  { config = readConfig(), now = new Date(), fetchImpl = fetch }: { config?: Config; now?: Date; fetchImpl?: typeof fetch } = {},
+  {
+    kind = 'new',
+    config = readConfig(),
+    now = new Date(),
+    fetchImpl = fetch,
+  }: { kind?: LeadKind; config?: Config; now?: Date; fetchImpl?: typeof fetch } = {},
 ): Promise<LsqResult> {
   const url =
     `https://${config.host}/v2/ProspectActivity.svc/CreateCustom` +
     `?accessKey=${encodeURIComponent(config.accessKey)}&secretKey=${encodeURIComponent(config.secretKey)}`;
-  const body = JSON.stringify(buildPayload(lead, { activityEvent: config.activityEvent, now }));
+  const activityEvent = kind === 'new' ? config.activityEvent : (config.existingActivityEvent ?? 232);
+  const body = JSON.stringify(buildPayload(lead, { kind, activityEvent, now }));
 
   const first = await attempt(url, body, fetchImpl);
   if (first.ok) return first;

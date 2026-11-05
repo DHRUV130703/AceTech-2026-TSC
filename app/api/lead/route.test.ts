@@ -36,15 +36,23 @@ describe('POST /api/lead', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, existing: false });
     expect(findLeadByPhone).toHaveBeenCalledWith('9876543210');
-    expect(createLeadWithActivity).toHaveBeenCalledWith(valid);
+    expect(createLeadWithActivity).toHaveBeenCalledWith(valid, { kind: 'new' });
   });
 
-  it('skips creating lead/activity when phone already exists', async () => {
+  it('logs the repeat-visit activity when phone already exists', async () => {
     findLeadByPhone.mockResolvedValue({ status: 'found', prospectId: 'abc' });
+    createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
     const res = await POST(req(valid));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, existing: true });
-    expect(createLeadWithActivity).not.toHaveBeenCalled();
+    expect(createLeadWithActivity).toHaveBeenCalledWith(valid, { kind: 'existing' });
+  });
+
+  it('returns 502 if the repeat-visit activity fails', async () => {
+    findLeadByPhone.mockResolvedValue({ status: 'found', prospectId: 'abc' });
+    createLeadWithActivity.mockResolvedValue({ ok: false, status: 500, detail: 'x' });
+    const res = await POST(req(valid));
+    expect(res.status).toBe(502);
   });
 
   it('falls through to create when the lookup fails', async () => {
@@ -52,7 +60,7 @@ describe('POST /api/lead', () => {
     createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
     const res = await POST(req(valid));
     expect(await res.json()).toEqual({ ok: true, existing: false });
-    expect(createLeadWithActivity).toHaveBeenCalledOnce();
+    expect(createLeadWithActivity).toHaveBeenCalledWith(valid, { kind: 'new' });
   });
 
   it('returns 400 with field errors on invalid input', async () => {

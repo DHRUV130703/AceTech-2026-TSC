@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { leadSchema, fieldErrors, maskPhone } from '@/lib/lead-schema';
-import { createLeadWithActivity, findLeadByPhone, fingerprint, readConfig, type LookupResult } from '@/lib/leadsquared';
+import { createLeadWithActivity, findLeadByPhone, fingerprint, readConfig, type LeadKind, type LookupResult } from '@/lib/leadsquared';
 import { rateLimit } from '@/lib/rate-limit';
 
 export async function POST(req: Request) {
@@ -33,36 +33,39 @@ export async function POST(req: Request) {
 
   const lead = parsed.data;
 
-  // 1. Existing lead? Then don't create a lead or log an activity in LSQ.
-  //    If the lookup itself fails, fall through and create — never lose a lead.
+  // 1. Does this phone already exist in LSQ?
+  //    If the lookup itself fails, treat as new — never lose a lead.
   let lookup: LookupResult;
   try {
     lookup = await findLeadByPhone(lead.phone);
   } catch (err) {
     lookup = { status: 'unknown', detail: err instanceof Error ? err.message : 'config error' };
   }
-  if (lookup.status === 'found') {
-    console.info(
-      JSON.stringify({ ts: new Date().toISOString(), phoneMasked: maskPhone(lead.phone), organisation: lead.organisation, outcome: 'existing', prospectId: lookup.prospectId }),
-    );
-    return NextResponse.json({ ok: true, existing: true });
-  }
   if (lookup.status === 'unknown') {
     console.warn(JSON.stringify({ ts: new Date().toISOString(), phoneMasked: maskPhone(lead.phone), outcome: 'lookup_failed', detail: lookup.detail }));
   }
+  const kind: LeadKind = lookup.status === 'found' ? 'existing' : 'new';
 
-  // 2. New lead → create lead + activity.
+  // 2. new      → create lead (with Source) + activity 231
+  //    existing → log repeat-visit activity 232 on the existing lead (Source untouched)
   let result;
   try {
-    result = await createLeadWithActivity(lead);
+    result = await createLeadWithActivity(lead, { kind });
   } catch (err) {
     result = { ok: false as const, status: null, detail: err instanceof Error ? err.message : 'config error' };
   }
 
-  const base = { ts: new Date().toISOString(), phoneMasked: maskPhone(lead.phone), organisation: lead.organisation, lsqStatus: result.status };
+  const base = {
+    ts: new Date().toISOString(),
+    kind,
+    phoneMasked: maskPhone(lead.phone),
+    organisation: lead.organisation,
+    prospectId: lookup.status === 'found' ? lookup.prospectId : undefined,
+    lsqStatus: result.status,
+  };
   if (result.ok) {
-    console.info(JSON.stringify({ ...base, outcome: 'created' }));
-    return NextResponse.json({ ok: true, existing: false });
+    console.info(JSON.stringify({ ...base, outcome: kind === 'new' ? 'created' : 'activity_logged' }));
+    return NextResponse.json({ ok: true, existing: kind === 'existing' });
   }
 
   // On auth failure, log non-reversible key fingerprints to diagnose misconfigured env vars.

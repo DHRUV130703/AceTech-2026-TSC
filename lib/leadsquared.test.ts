@@ -10,6 +10,7 @@ describe('buildPayload', () => {
     expect(buildPayload(lead, { activityEvent: 231, now })).toEqual({
       LeadDetails: [
         { Attribute: 'FirstName', Value: 'Priya Sharma' },
+        { Attribute: 'Source', Value: 'AceTech 2026 QR' },
         { Attribute: 'Phone', Value: '9876543210' },
       ],
       Activity: {
@@ -19,6 +20,27 @@ describe('buildPayload', () => {
         Fields: [
           { SchemaName: 'ActivityEvent_Note', Value: 'Lead captured at AceTech 2026 via QR' },
           { SchemaName: 'mx_Custom_6', Value: 'Studio Co' },
+        ],
+      },
+    });
+  });
+
+  it('builds the repeat-visit activity for existing leads (no Source overwrite)', () => {
+    expect(buildPayload(lead, { kind: 'existing', activityEvent: 232, now })).toEqual({
+      LeadDetails: [
+        { Attribute: 'FirstName', Value: 'Priya Sharma' },
+        { Attribute: 'Phone', Value: '9876543210' },
+      ],
+      Activity: {
+        ActivityEvent: 232,
+        ActivityNote: 'Existing lead visited AceTech 2026 booth (QR)',
+        ActivityDateTime: '2026-11-05 04:30:05',
+        Fields: [
+          { SchemaName: 'ActivityEvent_Note', Value: 'Existing lead visited AceTech 2026 booth (QR)' },
+          { SchemaName: 'mx_Custom_32', Value: 'End Client' },
+          { SchemaName: 'mx_Custom_29', Value: 'Yes' },
+          { SchemaName: 'mx_Custom_13', Value: 'Mattress' },
+          { SchemaName: 'mx_Custom_1', Value: 'AceTech Event' },
         ],
       },
     });
@@ -36,6 +58,14 @@ describe('createLeadWithActivity', () => {
     expect(r.ok).toBe(true);
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(fetchImpl.mock.calls[0][0]).toBe('https://api.test/v2/ProspectActivity.svc/CreateCustom?accessKey=AK%241&secretKey=SK');
+  });
+
+  it('uses activity 232 (default) for existing leads, 231 for new', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(res(200));
+    await createLeadWithActivity(lead, { kind: 'existing', config, now, fetchImpl });
+    await createLeadWithActivity(lead, { kind: 'new', config, now, fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).Activity.ActivityEvent).toBe(232);
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).Activity.ActivityEvent).toBe(231);
   });
 
   it('retries once on 5xx then succeeds', async () => {
@@ -97,7 +127,7 @@ describe('findLeadByPhone', () => {
 describe('readConfig', () => {
   it('decodes URL-encoded keys and trims quotes/whitespace/host scheme', () => {
     const c = readConfig({ LSQ_HOST: ' https://api.test/ ', LSQ_ACCESS_KEY: ' "u%24abc" ', LSQ_SECRET_KEY: 'sk\n' } as unknown as NodeJS.ProcessEnv);
-    expect(c).toMatchObject({ host: 'api.test', accessKey: 'u$abc', secretKey: 'sk', activityEvent: 231 });
+    expect(c).toMatchObject({ host: 'api.test', accessKey: 'u$abc', secretKey: 'sk', activityEvent: 231, existingActivityEvent: 232 });
   });
 
   it('strips dotenv backslash escaping before $', () => {

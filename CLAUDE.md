@@ -19,15 +19,18 @@ Scan QR ──▶ Landing / Form ──submit──▶ POST /api/lead
                   ▲                         │
                   │                         ▼
                   │            1. LSQ RetrieveLeadByPhoneNumber
-                  │                ├─ found ─────────▶ "Welcome back" state (NO lead/activity written)
+                  │                ├─ found ──────▶ 2a. CreateCustom: activity 232 (repeat visit) ──▶ "Welcome back" state
                   │                ├─ not found ─┐
                   │                └─ lookup failed ─┤ (fail-open: never lose a lead)
                   │                                  ▼
-                  │            2. LSQ CreateCustom (lead + activity) ──▶ Thank-you state
-                  └──── error (inline, form keeps input, retry) ◀── LSQ failure
+                  │            2b. CreateCustom: new lead (+Source) + activity 231 ──▶ Thank-you state
+                  └──── error (inline, form keeps input, retry) ◀── LSQ failure (either path)
 ```
 
-**Duplicate rule (in scope):** before creating anything, look the phone number up in LeadSquared. If a lead with that phone **already exists**, don't create a lead and **don't log an activity**. Show the "already with us" state instead. Only if the lookup *errors* (timeout/5xx) do we fall through to create, because a possible duplicate is better than a lost lead.
+**Existing-lead rule (in scope):** before writing anything, look the phone number up in LeadSquared.
+- **Already exists:** don't create a new lead. Log the **repeat-visit activity (232)** on the existing lead and show the "Welcome back" state. Don't send `Source`, so the lead's original source is kept.
+- **Not found:** create the lead with `Source = "AceTech 2026 QR"` and activity 231.
+- **Lookup errors** (timeout or 5xx): treat the visitor as new, because a possible duplicate is better than a lost lead.
 
 **Form fields (all required):**
 
@@ -91,17 +94,18 @@ x-LSQ-SecretKey: {LSQ_SECRET_KEY}
 - Timeout is 5s. Any error returns `unknown`, which falls through to create (fail-open).
 - It uses header auth, so the keys stay out of the URL.
 
-**Step 2: create (`createLeadWithActivity`), only when not found**
+**Step 2: write (`createLeadWithActivity(lead, { kind })`)**. Both paths use the same endpoint:
 ```
 POST https://{LSQ_HOST}/v2/ProspectActivity.svc/CreateCustom?accessKey={LSQ_ACCESS_KEY}&secretKey={LSQ_SECRET_KEY}
 Content-Type: application/json
 ```
 
-**Payload shape. Build it only in `lib/leadsquared.ts`:**
+**2b. New lead (`kind: 'new'`).** Build payloads only in `buildPayload()` in `lib/leadsquared.ts`:
 ```json
 {
   "LeadDetails": [
     { "Attribute": "FirstName", "Value": "<name>" },
+    { "Attribute": "Source",    "Value": "AceTech 2026 QR" },
     { "Attribute": "Phone",     "Value": "<10-digit phone>" }
   ],
   "Activity": {
@@ -116,9 +120,31 @@ Content-Type: application/json
 }
 ```
 
-- `FirstName`, `Phone`, and `mx_Custom_6` come from user input. Everything else is constant or computed on the server.
+**2a. Existing lead (`kind: 'existing'`): repeat-visit activity 232. No `Source`, no `mx_Custom_6`.**
+```json
+{
+  "LeadDetails": [
+    { "Attribute": "FirstName", "Value": "<name>" },
+    { "Attribute": "Phone",     "Value": "<10-digit phone>" }
+  ],
+  "Activity": {
+    "ActivityEvent": 232,
+    "ActivityNote": "Existing lead visited AceTech 2026 booth (QR)",
+    "ActivityDateTime": "<UTC now>",
+    "Fields": [
+      { "SchemaName": "ActivityEvent_Note", "Value": "Existing lead visited AceTech 2026 booth (QR)" },
+      { "SchemaName": "mx_Custom_32", "Value": "End Client" },
+      { "SchemaName": "mx_Custom_29", "Value": "Yes" },
+      { "SchemaName": "mx_Custom_13", "Value": "Mattress" },
+      { "SchemaName": "mx_Custom_1",  "Value": "AceTech Event" }
+    ]
+  }
+}
+```
+
+- `FirstName`, `Phone`, and `mx_Custom_6` come from user input. `Source` and the activity-232 fields are fixed constants (`LEAD_SOURCE`, `EXISTING_ACTIVITY_FIELDS`), configured by the LSQ admin. Don't change them without confirmation.
 - `ActivityDateTime` is the **server's current time in UTC** (LeadSquared stores API datetimes as UTC), formatted `yyyy-MM-dd HH:mm:ss`. Never trust a client timestamp.
-- `ActivityEvent` comes from env (`LSQ_ACTIVITY_EVENT`, default `231`) so ops can change it without a code change.
+- Activity codes come from env: `LSQ_ACTIVITY_EVENT` (default `231`) for new leads and `LSQ_EXISTING_ACTIVITY_EVENT` (default `232`) for repeat visits.
 
 ### Secrets: non-negotiable rules
 - Keys live **only** in env vars: `.env.local` locally and Vercel project env in deployed environments. **Never** commit them, put them in this file, ship them to the client, or log them.
@@ -133,7 +159,8 @@ Content-Type: application/json
 - Re-validate with the shared zod schema. Never trust client validation.
 - Responses:
   - `200 { ok: true, existing: false }`: new lead created in LSQ.
-  - `200 { ok: true, existing: true }`: phone already in LSQ, nothing written. The UI shows the "Welcome back" state.
+  - `200 { ok: true, existing: true }`: phone already in LSQ, and repeat-visit activity 232 was logged. The UI shows the "Welcome back" state.
+  - If the activity-232 write fails, the response is `502`, the same as a failed new-lead write: logged for backfill, and the user can retry.
   - `400 { ok: false, error: "validation", fields: {...} }`: invalid input.
   - `502 { ok: false, error: "upstream" }`: LSQ failed. **Log the full normalised lead server-side** so it can be re-pushed manually. This is the "zero lost leads" guarantee.
 - Timeout for the LSQ call is 10s, with **one** retry on network error or 5xx. Never retry on a 4xx.
