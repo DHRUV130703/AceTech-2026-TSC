@@ -23,8 +23,12 @@ export const INSERT_SQL = `INSERT INTO acetech_leads
  * and must never break the visitor's flow. Failures are logged (with the full lead) for backfill.
  */
 export async function logLeadToDb(entry: LeadLogEntry, pool = getPool()): Promise<boolean> {
-  if (!pool) return false;
+  if (!pool) {
+    console.warn(JSON.stringify({ outcome: 'db_not_configured', hasEnv: process.env.DATABASE_URL !== undefined, envLen: process.env.DATABASE_URL?.length ?? 0 }));
+    return false;
+  }
   try {
+    const t0 = Date.now();
     await pool.query(INSERT_SQL, [
       entry.lead.name,
       entry.lead.phone,
@@ -37,6 +41,7 @@ export async function logLeadToDb(entry: LeadLogEntry, pool = getPool()): Promis
       entry.error?.slice(0, 1000) ?? null,
       entry.userAgent?.slice(0, 300) ?? null,
     ]);
+    console.info(JSON.stringify({ outcome: 'db_logged', kind: entry.kind, lsqOutcome: entry.outcome, ms: Date.now() - t0 }));
     return true;
   } catch (err) {
     console.error(

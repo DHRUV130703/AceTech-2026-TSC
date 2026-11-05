@@ -9,6 +9,7 @@ const lead = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio 
 
 describe('logLeadToDb', () => {
   it('inserts one parameterised row', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
     const query = vi.fn().mockResolvedValue({});
     const ok = await logLeadToDb(
       { lead, kind: 'existing', outcome: 'activity_logged', lsqStatus: 200, prospectId: 'p1', activityEvent: 232, userAgent: 'UA' },
@@ -25,6 +26,7 @@ describe('logLeadToDb', () => {
   });
 
   it('is a no-op when DATABASE_URL is not configured', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(logLeadToDb({ lead, kind: 'new', outcome: 'created', lsqStatus: 200 })).resolves.toBe(false);
   });
 });
