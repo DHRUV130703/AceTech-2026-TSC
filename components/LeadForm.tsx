@@ -246,7 +246,7 @@ export function LeadForm() {
         })}
 
         {/* Honeypot — hidden from humans and assistive tech. */}
-        <div className="absolute -left-[9999px] h-px w-px overflow-hidden" aria-hidden="true">
+        <div className="absolute left-[-9999px] h-px w-px overflow-hidden" aria-hidden="true">
           <label htmlFor="website">Website</label>
           <input ref={honeypot} id="website" name="website" type="text" tabIndex={-1} autoComplete="off" />
         </div>
