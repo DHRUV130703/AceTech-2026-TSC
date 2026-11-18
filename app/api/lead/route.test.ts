@@ -9,6 +9,7 @@ vi.mock('@/lib/leadsquared', () => ({
   createLeadWithActivity: (...a: unknown[]) => createLeadWithActivity(...a),
   findLeadByPhone: (...a: unknown[]) => findLeadByPhone(...a),
   readConfig: () => ({ host: 'h', accessKey: 'a', secretKey: 's', activityEvent: 231, existingActivityEvent: 232 }),
+  activityEventFor: (lead: { source: string }, kind: string) => (kind === 'existing' || lead.source === 'End Client' ? 232 : 231),
   fingerprint: async (v: string) => ({ len: v.length }),
 }));
 
@@ -22,7 +23,7 @@ const req = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
-const valid = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co' };
+const valid = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect', city: 'Mumbai' };
 
 describe('POST /api/lead', () => {
   beforeEach(() => {
@@ -119,6 +120,31 @@ describe('POST /api/lead', () => {
       await POST(req({ ...valid, website: 'x' }));
       expect(logLeadToDb).not.toHaveBeenCalled();
     });
+  });
+
+  it('accepts only phone + source (other fields optional)', async () => {
+    createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
+    const res = await POST(req({ phone: '1234567890', source: 'End Client' }));
+    expect(res.status).toBe(200);
+    expect(createLeadWithActivity).toHaveBeenCalledWith(
+      { name: '', phone: '1234567890', organisation: '', source: 'End Client', city: '' },
+      { kind: 'new' },
+    );
+  });
+
+  it('returns 400 when source is missing or not one of the four values', async () => {
+    for (const source of [undefined, '', 'Builder']) {
+      const res = await POST(req({ ...valid, source }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).fields.source).toBeTruthy();
+    }
+    expect(createLeadWithActivity).not.toHaveBeenCalled();
+  });
+
+  it('logs activity 232 for a new End Client lead', async () => {
+    createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
+    await POST(req({ ...valid, source: 'End Client' }));
+    expect(logLeadToDb).toHaveBeenCalledWith(expect.objectContaining({ kind: 'new', activityEvent: 232 }));
   });
 
   it('returns 400 on malformed JSON', async () => {

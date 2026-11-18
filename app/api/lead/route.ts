@@ -1,17 +1,26 @@
 import { NextResponse } from 'next/server';
-import { leadSchema, fieldErrors, maskPhone } from '@/lib/lead-schema';
-import { createLeadWithActivity, findLeadByPhone, fingerprint, readConfig, type LeadKind, type LookupResult } from '@/lib/leadsquared';
+import { leadSchema, fieldErrors, maskPhone, type Lead } from '@/lib/lead-schema';
+import {
+  activityEventFor as eventFor,
+  createLeadWithActivity,
+  findLeadByPhone,
+  fingerprint,
+  readConfig,
+  type LeadKind,
+  type LookupResult,
+} from '@/lib/leadsquared';
 import { logLeadToDb } from '@/lib/lead-log';
 import { rateLimit } from '@/lib/rate-limit';
 
-function activityEventFor(kind: LeadKind): number | undefined {
+function activityEventFor(lead: Lead, kind: LeadKind): number | undefined {
   try {
-    const c = readConfig();
-    return kind === 'new' ? c.activityEvent : c.existingActivityEvent;
+    return eventFor(lead, kind, readConfig());
   } catch {
     return undefined;
   }
 }
+
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
 
 export async function POST(req: Request) {
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
@@ -33,9 +42,11 @@ export async function POST(req: Request) {
   }
 
   const parsed = leadSchema.safeParse({
-    name: String(body.name ?? ''),
-    phone: String(body.phone ?? ''),
-    organisation: String(body.organisation ?? ''),
+    name: str(body.name),
+    phone: str(body.phone),
+    organisation: str(body.organisation),
+    source: str(body.source),
+    city: str(body.city),
   });
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: 'validation', fields: fieldErrors(parsed.error) }, { status: 400 });
@@ -56,8 +67,8 @@ export async function POST(req: Request) {
   }
   const kind: LeadKind = lookup.status === 'found' ? 'existing' : 'new';
 
-  // 2. new      → create lead (with Source) + activity 231
-  //    existing → log repeat-visit activity 232 on the existing lead (Source untouched)
+  // 2. existing (any source) or End Client → activity 232; new Others/Architect/ID → activity 231.
+  //    See activityTypeFor() in lib/leadsquared.ts.
   let result;
   try {
     result = await createLeadWithActivity(lead, { kind });
@@ -76,7 +87,7 @@ export async function POST(req: Request) {
     outcome,
     lsqStatus: result.status,
     prospectId,
-    activityEvent: activityEventFor(kind),
+    activityEvent: activityEventFor(lead, kind),
     error: result.ok ? undefined : result.detail,
     userAgent: req.headers.get('user-agent'),
   });
@@ -86,7 +97,7 @@ export async function POST(req: Request) {
     ts: new Date().toISOString(),
     kind,
     phoneMasked: maskPhone(lead.phone),
-    organisation: lead.organisation,
+    source: lead.source,
     prospectId,
     lsqStatus: result.status,
   };

@@ -4,7 +4,7 @@
  * Not shared across instances — good enough to blunt scripted spam for a 1-event page.
  */
 const WINDOW_MS = 60_000;
-const LIMIT = 20;
+const LIMIT = 300; // booth Wi-Fi and Jio/Airtel CGNAT put many visitors behind one IP
 const hits = new Map<string, number[]>();
 
 export function rateLimit(key: string, now = Date.now()): boolean {

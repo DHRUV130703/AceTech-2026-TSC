@@ -19,8 +19,8 @@ export type LeadLogEntry = {
 export type DbLogStatus = 'logged' | 'not_configured' | 'config_invalid' | 'error' | 'timeout';
 
 export const INSERT_SQL = `INSERT INTO acetech_leads
-  (name, phone, organisation, lead_kind, lsq_outcome, lsq_status, lsq_prospect_id, lsq_activity_event, lsq_error, user_agent)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`;
+  (name, phone, organisation, source_type, city, lead_kind, lsq_outcome, lsq_status, lsq_prospect_id, lsq_activity_event, lsq_error, user_agent)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`;
 
 const DB_BUDGET_MS = 3_000;
 
@@ -48,9 +48,11 @@ export async function logLeadToDb(entry: LeadLogEntry, injected?: Pick<Pool, 'qu
 
   const insert = pool
     .query(INSERT_SQL, [
-      entry.lead.name,
+      entry.lead.name || null,
       entry.lead.phone,
-      entry.lead.organisation,
+      entry.lead.organisation || null,
+      entry.lead.source,
+      entry.lead.city || null,
       entry.kind,
       entry.outcome,
       entry.lsqStatus,

@@ -11,30 +11,33 @@ export function normalisePhone(raw: string): string {
   return digits;
 }
 
-export const leadSchema = z.object({
-  name: z
+/**
+ * Visitor type. Values must match the LSQ dropdown `mx_Custom_32` EXACTLY
+ * (also sent as `mx_Custom_14` on activity 231). Order = order shown in the form.
+ */
+export const SOURCES = ['End Client', 'Others', 'Architect', 'Interior Designer'] as const;
+export type Source = (typeof SOURCES)[number];
+
+/** Optional free-text field: collapse whitespace and cap length — never fails validation. */
+const optionalText = (max: number) =>
+  z
     .string()
-    .transform(collapse)
-    .pipe(
-      z
-        .string()
-        .min(2, 'Please enter your full name.')
-        .max(60, 'Name is too long.')
-        .regex(/^[\p{L}][\p{L} .'-]*$/u, 'Please use letters only.'),
-    ),
+    .optional()
+    .transform((v) => collapse(v ?? '').slice(0, max));
+
+/**
+ * Only phone and source are mandatory. The UI shows NO error text (team decision) —
+ * invalid fields just get a red outline — so messages here are for screen readers/logs only.
+ */
+export const leadSchema = z.object({
+  name: optionalText(60),
   phone: z
     .string()
     .transform(normalisePhone)
-    .pipe(z.string().regex(/^[6-9]\d{9}$/, 'Please enter a valid 10-digit mobile number.')),
-  organisation: z
-    .string()
-    .transform(collapse)
-    .pipe(
-      z
-        .string()
-        .min(2, 'Please enter your organisation name.')
-        .max(100, 'Organisation name is too long.'),
-    ),
+    .pipe(z.string().regex(/^\d{10}$/, 'Phone number must be 10 digits.')),
+  organisation: optionalText(100),
+  source: z.enum(SOURCES, { error: 'Please select a source.' }),
+  city: optionalText(60),
 });
 
 export type LeadInput = z.input<typeof leadSchema>;

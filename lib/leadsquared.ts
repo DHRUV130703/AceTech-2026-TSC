@@ -2,52 +2,73 @@ import 'server-only';
 import type { Lead } from './lead-schema';
 
 export const ACTIVITY_NOTE = 'Lead captured at AceTech 2026 via QR';
+export const END_CLIENT_NOTE = 'End Client captured at AceTech 2026 via QR';
 export const EXISTING_ACTIVITY_NOTE = 'Existing lead visited AceTech 2026 booth (QR)';
 export const LEAD_SOURCE = 'AceTech 2026 QR';
+export const EVENT_NAME = 'AceTech Event';
 
-/** Fixed activity fields for a repeat visitor (activity 232), as configured by the LSQ admin. */
-export const EXISTING_ACTIVITY_FIELDS = [
-  { SchemaName: 'mx_Custom_32', Value: 'End Client' },
-  { SchemaName: 'mx_Custom_29', Value: 'Yes' },
-  { SchemaName: 'mx_Custom_13', Value: 'Mattress' },
-  { SchemaName: 'mx_Custom_1', Value: 'AceTech Event' },
-] as const;
-
+/** Result of the phone lookup: decides the UI copy and (with the source) which activity is logged. */
 export type LeadKind = 'new' | 'existing';
+
+/**
+ * Routing (owned by the LSQ admin — don't change without confirmation):
+ *   existing lead (any source)        → activity 232 ("visit")
+ *   new lead + source "End Client"    → activity 232 ("visit")
+ *   new lead + Others/Architect/ID    → activity 231 ("new")
+ */
+export type ActivityType = 'new' | 'visit';
+export function activityTypeFor(source: Lead['source'], kind: LeadKind): ActivityType {
+  return kind === 'existing' || source === 'End Client' ? 'visit' : 'new';
+}
 
 /** LeadSquared API datetimes are UTC, formatted `yyyy-MM-dd HH:mm:ss`. */
 export function formatUtc(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+type Field = { SchemaName: string; Value: string };
+type Attr = { Attribute: string; Value: string };
+/** Optional user input is only sent when filled in. */
+const opt = <T>(value: string, item: T): T[] => (value ? [item] : []);
+
 /**
- * new      → lead (FirstName, Source, Phone) + activity `activityEvent` (231) with Firm Name.
- * existing → lead match (FirstName, Phone; Source NOT overwritten) + activity `activityEvent` (232)
- *            with the fixed repeat-visit fields.
+ * visit (232): FirstName?, Source (new leads only), Phone
+ *              + mx_Custom_32 = source, mx_Custom_29 = Yes, mx_Custom_33 = city?, mx_Custom_1 = AceTech Event
+ * new   (231): FirstName?, Source, Phone
+ *              + mx_Custom_13 = city?, mx_Custom_14 = source, mx_Custom_6 = organisation?
  */
-export function buildPayload(lead: Lead, opts: { kind?: LeadKind; activityEvent: number; now: Date }) {
-  const kind = opts.kind ?? 'new';
-  const note = kind === 'new' ? ACTIVITY_NOTE : EXISTING_ACTIVITY_NOTE;
+export function buildPayload(lead: Lead, opts: { kind: LeadKind; activityEvent: number; now: Date }) {
+  const type = activityTypeFor(lead.source, opts.kind);
+  const note = type === 'new' ? ACTIVITY_NOTE : opts.kind === 'existing' ? EXISTING_ACTIVITY_NOTE : END_CLIENT_NOTE;
+
+  const LeadDetails: Attr[] = [
+    ...opt(lead.name, { Attribute: 'FirstName', Value: lead.name }),
+    // Never overwrite the original Source of an existing lead.
+    ...(opts.kind === 'new' ? [{ Attribute: 'Source', Value: LEAD_SOURCE }] : []),
+    { Attribute: 'Phone', Value: lead.phone },
+  ];
+
+  const fields: Field[] =
+    type === 'visit'
+      ? [
+          { SchemaName: 'mx_Custom_32', Value: lead.source },
+          { SchemaName: 'mx_Custom_29', Value: 'Yes' },
+          ...opt(lead.city, { SchemaName: 'mx_Custom_33', Value: lead.city }),
+          { SchemaName: 'mx_Custom_1', Value: EVENT_NAME },
+        ]
+      : [
+          ...opt(lead.city, { SchemaName: 'mx_Custom_13', Value: lead.city }),
+          { SchemaName: 'mx_Custom_14', Value: lead.source },
+          ...opt(lead.organisation, { SchemaName: 'mx_Custom_6', Value: lead.organisation }),
+        ];
+
   return {
-    LeadDetails:
-      kind === 'new'
-        ? [
-            { Attribute: 'FirstName', Value: lead.name },
-            { Attribute: 'Source', Value: LEAD_SOURCE },
-            { Attribute: 'Phone', Value: lead.phone },
-          ]
-        : [
-            { Attribute: 'FirstName', Value: lead.name },
-            { Attribute: 'Phone', Value: lead.phone },
-          ],
+    LeadDetails,
     Activity: {
       ActivityEvent: opts.activityEvent,
       ActivityNote: note,
       ActivityDateTime: formatUtc(opts.now),
-      Fields: [
-        { SchemaName: 'ActivityEvent_Note', Value: note },
-        ...(kind === 'new' ? [{ SchemaName: 'mx_Custom_6', Value: lead.organisation }] : EXISTING_ACTIVITY_FIELDS.map((f) => ({ ...f }))),
-      ],
+      Fields: [{ SchemaName: 'ActivityEvent_Note', Value: note }, ...fields],
     },
   };
 }
@@ -90,6 +111,11 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
     activityEvent: num(env.LSQ_ACTIVITY_EVENT, 231),
     existingActivityEvent: num(env.LSQ_EXISTING_ACTIVITY_EVENT, 232),
   };
+}
+
+/** Activity code for this lead: 231 (new) or 232 (visit), overridable via env. */
+export function activityEventFor(lead: Lead, kind: LeadKind, config: Pick<Config, 'activityEvent' | 'existingActivityEvent'>): number {
+  return activityTypeFor(lead.source, kind) === 'new' ? config.activityEvent : (config.existingActivityEvent ?? 232);
 }
 
 /** Non-reversible fingerprint of a credential for diagnosing auth failures in logs. */
@@ -167,9 +193,13 @@ export async function findLeadByPhone(
   }
 }
 
+/** 429 = LSQ rate limit (busy booth). Wait and retry; network/5xx retry once immediately. */
+const RETRY_DELAYS_429_MS = [800, 1600];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * POSTs to LSQ CreateCustom. One retry on network error / 5xx; never on 4xx.
- * kind 'new' → creates lead + activity 231; kind 'existing' → logs activity 232 on the existing lead.
+ * POSTs to LSQ CreateCustom with the payload for this lead (231 or 232, see activityTypeFor).
+ * Retries: network error / 5xx once; 429 up to twice with back-off; never other 4xx.
  */
 export async function createLeadWithActivity(
   lead: Lead,
@@ -178,17 +208,25 @@ export async function createLeadWithActivity(
     config = readConfig(),
     now = new Date(),
     fetchImpl = fetch,
-  }: { kind?: LeadKind; config?: Config; now?: Date; fetchImpl?: typeof fetch } = {},
+    wait = sleep,
+  }: { kind?: LeadKind; config?: Config; now?: Date; fetchImpl?: typeof fetch; wait?: (ms: number) => Promise<unknown> } = {},
 ): Promise<LsqResult> {
   const url =
     `https://${config.host}/v2/ProspectActivity.svc/CreateCustom` +
     `?accessKey=${encodeURIComponent(config.accessKey)}&secretKey=${encodeURIComponent(config.secretKey)}`;
-  const activityEvent = kind === 'new' ? config.activityEvent : (config.existingActivityEvent ?? 232);
-  const body = JSON.stringify(buildPayload(lead, { kind, activityEvent, now }));
+  const body = JSON.stringify(buildPayload(lead, { kind, activityEvent: activityEventFor(lead, kind, config), now }));
 
-  const first = await attempt(url, body, fetchImpl);
-  if (first.ok) return first;
-  const retryable = first.status === null || first.status >= 500;
-  if (!retryable) return first;
-  return attempt(url, body, fetchImpl);
+  let result = await attempt(url, body, fetchImpl);
+  let serverRetried = false;
+  for (let i = 0; !result.ok; ) {
+    if (result.status === 429 && i < RETRY_DELAYS_429_MS.length) {
+      await wait(RETRY_DELAYS_429_MS[i++]);
+    } else if ((result.status === null || result.status >= 500) && !serverRetried) {
+      serverRetried = true;
+    } else {
+      break;
+    }
+    result = await attempt(url, body, fetchImpl);
+  }
+  return result;
 }

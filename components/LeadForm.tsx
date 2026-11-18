@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { leadSchema, fieldErrors, type LeadField, type LeadInput } from '@/lib/lead-schema';
+import { leadSchema, fieldErrors, normalisePhone, SOURCES, type LeadField } from '@/lib/lead-schema';
 
 type Status = 'idle' | 'submitting' | 'success' | 'existing';
 
@@ -25,27 +25,46 @@ const firstName = (name: string) => {
 };
 type Errors = Partial<Record<LeadField, string>>;
 
-const FIELDS: {
+type Values = Record<LeadField, string>;
+
+type FieldDef = {
   key: LeadField;
   label: string;
-  type: string;
-  autoComplete: string;
-  inputMode?: 'numeric' | 'text';
+  required?: boolean;
   placeholder: string;
-  enterKeyHint: 'next' | 'done';
-  autoCapitalize: 'words' | 'off';
-}[] = [
-  { key: 'name', label: 'Full Name', type: 'text', autoComplete: 'name', placeholder: 'e.g. Priya Sharma', enterKeyHint: 'next', autoCapitalize: 'words' },
-  { key: 'phone', label: 'Phone Number', type: 'tel', autoComplete: 'tel-national', inputMode: 'numeric', placeholder: '10-digit mobile', enterKeyHint: 'next', autoCapitalize: 'off' },
-  { key: 'organisation', label: 'Organisation / Firm', type: 'text', autoComplete: 'organization', placeholder: 'e.g. Studio Design Co.', enterKeyHint: 'done', autoCapitalize: 'words' },
+} & (
+  | {
+      kind: 'input';
+      type: string;
+      autoComplete: string;
+      inputMode?: 'numeric' | 'text';
+      autoCapitalize: 'words' | 'off';
+      maxLength: number;
+    }
+  | { kind: 'select'; options: readonly string[] }
+);
+
+/** Order shown in the form. Only phone and source are mandatory. */
+const FIELDS: FieldDef[] = [
+  { key: 'name', label: 'Full Name', kind: 'input', type: 'text', autoComplete: 'name', placeholder: 'e.g. Priya Sharma', autoCapitalize: 'words', maxLength: 60 },
+  { key: 'phone', label: 'Phone Number', required: true, kind: 'input', type: 'tel', autoComplete: 'tel-national', inputMode: 'numeric', placeholder: '10-digit mobile', autoCapitalize: 'off', maxLength: 20 /* raw paste like '+91 98765 43210'; cleanPhoneInput caps at 10 digits */ },
+  { key: 'organisation', label: 'Firm / Organisation', kind: 'input', type: 'text', autoComplete: 'organization', placeholder: 'e.g. Studio Design Co.', autoCapitalize: 'words', maxLength: 100 },
+  { key: 'source', label: 'Source', required: true, kind: 'select', options: SOURCES, placeholder: 'Select source' },
+  { key: 'city', label: 'City', kind: 'input', type: 'text', autoComplete: 'address-level2', placeholder: 'e.g. Mumbai', autoCapitalize: 'words', maxLength: 60 },
 ];
 
+/** Keep the phone box to 10 digits; autofilled "+91 98765 43210" / "098…" are normalised first. */
+const cleanPhoneInput = (raw: string) => {
+  const digits = raw.replace(/\D/g, '');
+  return (digits.length > 10 ? normalisePhone(digits) : digits).slice(0, 10);
+};
+
 export function LeadForm() {
-  const [values, setValues] = useState<LeadInput>({ name: '', phone: '', organisation: '' });
+  const [values, setValues] = useState<Values>({ name: '', phone: '', organisation: '', source: '', city: '' });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>('idle');
-  const inputs = useRef<Partial<Record<LeadField, HTMLInputElement | null>>>({});
+  const inputs = useRef<Partial<Record<LeadField, HTMLInputElement | HTMLSelectElement | null>>>({});
   const honeypot = useRef<HTMLInputElement>(null);
   const thanksHeading = useRef<HTMLHeadingElement>(null);
 
@@ -176,17 +195,42 @@ export function LeadForm() {
         className="mt-7 rounded-2xl bg-white p-5 shadow-[0_12px_36px_rgb(31_42_76/0.14)] min-[360px]:p-6"
         aria-describedby={formError ? 'form-error' : undefined}
       >
-        {FIELDS.map((f) => {
-          const err = errors[f.key];
+        {FIELDS.map((f, i) => {
+          const invalid = !!errors[f.key];
           const id = `field-${f.key}`;
+          const shared = {
+            id,
+            name: f.key,
+            value: values[f.key],
+            required: f.required,
+            'aria-required': f.required,
+            'aria-invalid': invalid,
+            // No visible error text (team decision): the red outline marks the field, and a
+            // screen-reader-only hint explains it.
+            'aria-describedby': invalid ? `${id}-hint` : undefined,
+            onBlur: () => f.required && values[f.key] && validateField(f.key),
+          };
+          const setValue = (v: string) => {
+            setValues((s) => ({ ...s, [f.key]: f.key === 'phone' ? cleanPhoneInput(v) : v }));
+            if (invalid) setErrors((x) => ({ ...x, [f.key]: undefined }));
+          };
+          const isLast = i === FIELDS.length - 1;
           return (
             <div key={f.key} className="mb-5">
               <label htmlFor={id} className="mb-1.5 block text-sm font-semibold">
                 {f.label}
+                {f.required ? (
+                  <span className="text-error" aria-hidden="true">
+                    {' '}
+                    *
+                  </span>
+                ) : (
+                  <span className="font-normal text-navy-800/60"> (optional)</span>
+                )}
               </label>
               <div
-                className={`flex h-12 items-center overflow-hidden rounded-xl border-2 bg-aqua-50 transition-colors focus-within:border-navy-900 focus-within:bg-white ${
-                  err ? 'border-error' : 'border-transparent'
+                className={`relative flex h-12 items-center overflow-hidden rounded-xl border-2 bg-aqua-50 transition-colors focus-within:bg-white ${
+                  invalid ? 'border-error' : 'border-transparent focus-within:border-navy-900'
                 }`}
               >
                 {f.key === 'phone' && (
@@ -194,45 +238,70 @@ export function LeadForm() {
                     +91
                   </span>
                 )}
-                <input
-                  ref={(el) => {
-                    inputs.current[f.key] = el;
-                  }}
-                  id={id}
-                  name={f.key}
-                  type={f.type}
-                  inputMode={f.inputMode}
-                  autoComplete={f.autoComplete}
-                  autoCapitalize={f.autoCapitalize}
-                  autoCorrect="off"
-                  spellCheck={false}
-                  enterKeyHint={f.enterKeyHint}
-                  onKeyDown={(e) => {
-                    // "Next" on the mobile keyboard moves to the following field instead of submitting.
-                    if (e.key === 'Enter' && f.enterKeyHint === 'next') {
-                      e.preventDefault();
-                      const i = FIELDS.findIndex((x) => x.key === f.key);
-                      inputs.current[FIELDS[i + 1].key]?.focus();
-                    }
-                  }}
-                  placeholder={f.placeholder}
-                  maxLength={f.key === 'phone' ? 15 : f.key === 'name' ? 60 : 100}
-                  value={values[f.key]}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setValues((s) => ({ ...s, [f.key]: v }));
-                    if (err) setErrors((x) => ({ ...x, [f.key]: undefined }));
-                  }}
-                  onBlur={() => values[f.key] && validateField(f.key)}
-                  aria-invalid={!!err}
-                  aria-describedby={err ? `${id}-error` : undefined}
-                  required
-                  className="h-full w-full bg-transparent px-4 text-base text-navy-900 outline-none placeholder:text-navy-800/40"
-                />
+                {f.kind === 'select' ? (
+                  <>
+                    <select
+                      {...shared}
+                      ref={(el) => {
+                        inputs.current[f.key] = el;
+                      }}
+                      onChange={(e) => setValue(e.target.value)}
+                      className={`h-full w-full appearance-none bg-transparent pr-10 pl-4 text-base outline-none ${
+                        values[f.key] ? 'text-navy-900' : 'text-navy-800/40'
+                      }`}
+                    >
+                      <option value="" disabled>
+                        {f.placeholder}
+                      </option>
+                      {f.options.map((o) => (
+                        <option key={o} value={o} className="text-navy-900">
+                          {o}
+                        </option>
+                      ))}
+                    </select>
+                    <svg
+                      viewBox="0 0 20 20"
+                      className="pointer-events-none absolute right-4 h-5 w-5 text-navy-800"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      aria-hidden="true"
+                    >
+                      <path d="M5 7.5l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </>
+                ) : (
+                  <input
+                    {...shared}
+                    ref={(el) => {
+                      inputs.current[f.key] = el;
+                    }}
+                    type={f.type}
+                    inputMode={f.inputMode}
+                    autoComplete={f.autoComplete}
+                    autoCapitalize={f.autoCapitalize}
+                    autoCorrect="off"
+                    spellCheck={false}
+                    enterKeyHint={isLast ? 'done' : 'next'}
+                    onKeyDown={(e) => {
+                      // "Next" on the mobile keyboard moves to the following field instead of submitting.
+                      if (e.key === 'Enter' && !isLast) {
+                        e.preventDefault();
+                        inputs.current[FIELDS[i + 1].key]?.focus();
+                      }
+                    }}
+                    placeholder={f.placeholder}
+                    maxLength={f.maxLength}
+                    onChange={(e) => setValue(e.target.value)}
+                    className="h-full w-full bg-transparent px-4 text-base text-navy-900 outline-none placeholder:text-navy-800/40"
+                  />
+                )}
               </div>
-              <p id={`${id}-error`} aria-live="polite" className="mt-1.5 min-h-0 text-sm font-medium text-error">
-                {err}
-              </p>
+              {invalid && (
+                <span id={`${id}-hint`} className="sr-only">
+                  {errors[f.key]}
+                </span>
+              )}
             </div>
           );
         })}

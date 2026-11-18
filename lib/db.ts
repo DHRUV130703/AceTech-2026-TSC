@@ -29,9 +29,10 @@ export function poolConfig(env: NodeJS.ProcessEnv = process.env): PoolConfig | n
   return {
     connectionString: url.toString(),
     ssl: ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false },
-    // Aiven plan allows 15 connections; Fluid Compute reuses instances, so keep each pool tiny.
-    max: 3,
-    idleTimeoutMillis: 10_000,
+    // Aiven plan allows 15 connections. Under a spike Vercel may run several instances, so each
+    // holds at most TWO connections (inserts queue on them) and releases them quickly: 7 instances × 2 = 14 < 15.
+    max: 2,
+    idleTimeoutMillis: 5_000,
     connectionTimeoutMillis: 5_000,
     statement_timeout: 5_000,
   };

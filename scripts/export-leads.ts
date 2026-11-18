@@ -17,7 +17,7 @@ const client = new pg.Client({ connectionString: url.toString(), ssl: ca ? { ca,
 await client.connect();
 try {
   const { rows, fields } = await client.query(
-    `SELECT id, created_at AT TIME ZONE 'Asia/Kolkata' AS created_at_ist, name, phone, organisation, lead_kind,
+    `SELECT id, created_at AT TIME ZONE 'Asia/Kolkata' AS created_at_ist, name, phone, organisation, source_type, city, lead_kind,
             lsq_outcome, lsq_status, lsq_prospect_id, lsq_activity_event, lsq_error
        FROM acetech_leads ${onlyFailed ? "WHERE lsq_outcome = 'failed'" : ''}
       ORDER BY created_at`,

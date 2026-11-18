@@ -18,27 +18,37 @@ Read this file before you change anything in this repo. It is the source of trut
 Scan QR ──▶ Landing / Form ──submit──▶ POST /api/lead
                   ▲                         │
                   │                         ▼
-                  │            1. LSQ RetrieveLeadByPhoneNumber
-                  │                ├─ found ──────▶ 2a. CreateCustom: activity 232 (repeat visit) ──▶ "Welcome back" state
-                  │                ├─ not found ─┐
-                  │                └─ lookup failed ─┤ (fail-open: never lose a lead)
-                  │                                  ▼
-                  │            2b. CreateCustom: new lead (+Source) + activity 231 ──▶ Thank-you state
-                  └──── error (inline, form keeps input, retry) ◀── LSQ failure (either path)
+                  │            1. LSQ RetrieveLeadByPhoneNumber (always)
+                  │                ├─ found ─────────────────────────────┐
+                  │                ├─ not found ─┬─ Source = End Client ─┤──▶ 2a. activity 232
+                  │                └─ lookup failed (treated as not found)│
+                  │                              └─ Others/Architect/ID ──▶ 2b. new lead + activity 231
+                  └──── error (inline banner, form keeps input, retry) ◀── LSQ failure (any path)
 ```
 
-**Existing-lead rule (in scope):** before writing anything, look the phone number up in LeadSquared.
-- **Already exists:** don't create a new lead. Log the **repeat-visit activity (232)** on the existing lead and show the "Welcome back" state. Don't send `Source`, so the lead's original source is kept.
-- **Not found:** create the lead with `Source = "AceTech 2026 QR"` and activity 231.
-- **Lookup errors** (timeout or 5xx): treat the visitor as new, because a possible duplicate is better than a lost lead.
+**Routing rule (owned by the LSQ admin, set 2026-11-18):** always look the phone number up first. It decides the UI ("Welcome back" vs "Thank you") and, together with **Source**, which activity is logged (`activityTypeFor()` in `lib/leadsquared.ts`):
 
-**Form fields (all required):**
+| Source \ phone | New (not in LSQ) | Existing (in LSQ) |
+|---|---|---|
+| **End Client** | **232**, plus `Source = "AceTech 2026 QR"` on the lead | **232** |
+| **Others / Architect / Interior Designer** | **231**, plus `Source = "AceTech 2026 QR"` | **232**, with `mx_Custom_32` = chosen source |
 
-| UI label            | Input                       | LeadSquared mapping                   |
-|---------------------|-----------------------------|---------------------------------------|
-| Full Name           | text, `autocomplete="name"` | `LeadDetails[].Attribute = FirstName` |
-| Phone Number        | tel, `inputmode="numeric"`  | `LeadDetails[].Attribute = Phone`     |
-| Organisation / Firm | text, `autocomplete="organization"` | `Activity.Fields[].SchemaName = mx_Custom_6` (shown as **"Firm Name"** in LSQ, type String) |
+- Never send `Source` for an existing lead, so its original source is kept.
+- If the lookup errors (timeout or 5xx), treat the visitor as new. A possible duplicate is better than a lost lead.
+- `Source` on *new* End Client leads was our choice (the admin's cURL omitted it), to keep booth attribution. Remove it if the admin objects.
+
+**Form fields: only Phone and Source are mandatory.** Order as shown:
+
+| # | UI label | Required | Input | LeadSquared mapping |
+|---|---|---|---|---|
+| 1 | Full Name | optional | text | `LeadDetails.FirstName` (omitted when empty) |
+| 2 | Phone Number | **yes** | tel, +91 prefix, exactly 10 digits | `LeadDetails.Phone` |
+| 3 | Firm / Organisation | optional | text | 231: `mx_Custom_6` (Firm Name). Not sent on 232. |
+| 4 | Source | **yes** | dropdown with no default: **End Client**, **Others**, **Architect**, **Interior Designer** (exact LSQ values) | 232: `mx_Custom_32` · 231: `mx_Custom_14` |
+| 5 | City | optional | text | 232: `mx_Custom_33` · 231: `mx_Custom_13` |
+
+- **No validation text in the UI (team decision).** An invalid or missing required field gets a red outline and focus, plus a screen-reader-only hint. Never add messages like "Please enter a valid mobile number".
+- Required fields carry a red `*`; optional ones say "(optional)".
 
 **Success copy (exact):**
 > **Thank you for visiting us at The Sleep Company – AceTech Event 2026**
@@ -54,6 +64,8 @@ It uses a heart icon (navy on aqua) instead of the green check, and the same con
 
 **Success metrics.** Fewer than 20 seconds from scan to submit. Zero lost leads. At least 99% of submissions reach LSQ, with the rest recoverable from logs.
 
+**Capacity (100 people at once):** the page is served from Vercel's CDN, and functions autoscale. The limits that matter are the Aiven connection cap (handled by the pool size) and LSQ API rate limits (429 is retried; the actual limit is unverified, so confirm with the LSQ admin). Load-test with honeypot-filled requests, which skip LSQ and the DB, so nothing reaches the CRM.
+
 **Out of scope (v1):** admin dashboard, OTP verification, an in-app camera scanner, multiple languages.
 
 ---
@@ -64,7 +76,7 @@ It uses a heart icon (navy on aqua) instead of the green check, and the same con
 - **Tailwind CSS** for styling, with tokens from §4 in the Tailwind theme / CSS variables.
 - **zod** for validation. Share one schema between client and server.
 - Use `next/font` for fonts and `next/image` for images.
-- No database in v1. LeadSquared is the system of record. Server logs are the fallback audit trail (§6).
+- LeadSquared is the system of record. Aiven Postgres keeps a secondary log of every submission (§6a), and server logs are the last-resort audit trail (§6).
 
 Suggested structure:
 ```
@@ -100,49 +112,55 @@ POST https://{LSQ_HOST}/v2/ProspectActivity.svc/CreateCustom?accessKey={LSQ_ACCE
 Content-Type: application/json
 ```
 
-**2b. New lead (`kind: 'new'`).** Build payloads only in `buildPayload()` in `lib/leadsquared.ts`:
-```json
-{
-  "LeadDetails": [
-    { "Attribute": "FirstName", "Value": "<name>" },
-    { "Attribute": "Source",    "Value": "AceTech 2026 QR" },
-    { "Attribute": "Phone",     "Value": "<10-digit phone>" }
-  ],
-  "Activity": {
-    "ActivityEvent": 231,
-    "ActivityNote": "Lead captured at AceTech 2026 via QR",
-    "ActivityDateTime": "<UTC now, yyyy-MM-dd HH:mm:ss>",
-    "Fields": [
-      { "SchemaName": "ActivityEvent_Note", "Value": "Lead captured at AceTech 2026 via QR" },
-      { "SchemaName": "mx_Custom_6",        "Value": "<organisation>" }
-    ]
-  }
-}
-```
+Payloads are built only in `buildPayload()` in `lib/leadsquared.ts`. Empty optional fields are **omitted**, never sent blank.
 
-**2a. Existing lead (`kind: 'existing'`): repeat-visit activity 232. No `Source`, no `mx_Custom_6`.**
+**2a. Activity 232 ("visit"): every existing lead, and new End Client leads.**
 ```json
 {
   "LeadDetails": [
-    { "Attribute": "FirstName", "Value": "<name>" },
-    { "Attribute": "Phone",     "Value": "<10-digit phone>" }
+    { "Attribute": "FirstName", "Value": "<name, if given>" },
+    { "Attribute": "Source",    "Value": "AceTech 2026 QR" },   // NEW leads only
+    { "Attribute": "Phone",     "Value": "<10 digits>" }
   ],
   "Activity": {
     "ActivityEvent": 232,
-    "ActivityNote": "Existing lead visited AceTech 2026 booth (QR)",
+    "ActivityNote": "Existing lead visited AceTech 2026 booth (QR)",   // or "End Client captured at AceTech 2026 via QR" (new End Client)
     "ActivityDateTime": "<UTC now>",
     "Fields": [
-      { "SchemaName": "ActivityEvent_Note", "Value": "Existing lead visited AceTech 2026 booth (QR)" },
-      { "SchemaName": "mx_Custom_32", "Value": "End Client" },
+      { "SchemaName": "ActivityEvent_Note", "Value": "<same as ActivityNote>" },
+      { "SchemaName": "mx_Custom_32", "Value": "<Source: End Client | Others | Architect | Interior Designer>" },
       { "SchemaName": "mx_Custom_29", "Value": "Yes" },
-      { "SchemaName": "mx_Custom_13", "Value": "Mattress" },
+      { "SchemaName": "mx_Custom_33", "Value": "<city, if given>" },
       { "SchemaName": "mx_Custom_1",  "Value": "AceTech Event" }
     ]
   }
 }
 ```
 
-- `FirstName`, `Phone`, and `mx_Custom_6` come from user input. `Source` and the activity-232 fields are fixed constants (`LEAD_SOURCE`, `EXISTING_ACTIVITY_FIELDS`), configured by the LSQ admin. Don't change them without confirmation.
+**2b. Activity 231 ("new"): new lead with Source Others / Architect / Interior Designer.**
+```json
+{
+  "LeadDetails": [
+    { "Attribute": "FirstName", "Value": "<name, if given>" },
+    { "Attribute": "Source",    "Value": "AceTech 2026 QR" },
+    { "Attribute": "Phone",     "Value": "<10 digits>" }
+  ],
+  "Activity": {
+    "ActivityEvent": 231,
+    "ActivityNote": "Lead captured at AceTech 2026 via QR",
+    "ActivityDateTime": "<UTC now>",
+    "Fields": [
+      { "SchemaName": "ActivityEvent_Note", "Value": "Lead captured at AceTech 2026 via QR" },
+      { "SchemaName": "mx_Custom_13", "Value": "<city, if given>" },
+      { "SchemaName": "mx_Custom_14", "Value": "<Source>" },
+      { "SchemaName": "mx_Custom_6",  "Value": "<firm, if given>" }
+    ]
+  }
+}
+```
+
+- The same city goes to `mx_Custom_33` on 232 but `mx_Custom_13` on 231. Each activity type has its own schema. The `mx_Custom_13 = "Mattress"` field from the earlier 232 payload is gone.
+- Schema names and constants (`LEAD_SOURCE`, `EVENT_NAME`, `mx_Custom_29 = Yes`) are owned by the LSQ admin. Don't change them without confirmation.
 - `ActivityDateTime` is the **server's current time in UTC** (LeadSquared stores API datetimes as UTC), formatted `yyyy-MM-dd HH:mm:ss`. Never trust a client timestamp.
 - Activity codes come from env: `LSQ_ACTIVITY_EVENT` (default `231`) for new leads and `LSQ_EXISTING_ACTIVITY_EVENT` (default `232`) for repeat visits.
 
@@ -155,17 +173,17 @@ Content-Type: application/json
 - The access key contains a literal `$`. In `.env.local` it must be escaped as `\$`, but in the **Vercel dashboard** enter it unescaped (`u$…`). `readConfig()` tolerates `\$`, `%24`, quotes and whitespace. If LSQ ever returns 401 "Invalid User Details", the error log includes a `creds` fingerprint (length + sha256 prefix) to compare against the expected key.
 
 ### API route contract: `POST /api/lead`
-- Request: `{ name, phone, organisation, website /* honeypot */ }`
+- Request: `{ name?, phone, organisation?, source, city?, website /* honeypot */ }`
 - Re-validate with the shared zod schema. Never trust client validation.
 - Responses:
-  - `200 { ok: true, existing: false }`: new lead created in LSQ.
-  - `200 { ok: true, existing: true }`: phone already in LSQ, and repeat-visit activity 232 was logged. The UI shows the "Welcome back" state.
+  - `200 { ok: true, existing: false }`: new lead created in LSQ (231, or 232 for End Client).
+  - `200 { ok: true, existing: true }`: phone already in LSQ, and activity 232 was logged. The UI shows the "Welcome back" state.
   - If the activity-232 write fails, the response is `502`, the same as a failed new-lead write: logged for backfill, and the user can retry.
   - `400 { ok: false, error: "validation", fields: {...} }`: invalid input.
   - `502 { ok: false, error: "upstream" }`: LSQ failed. **Log the full normalised lead server-side** so it can be re-pushed manually. This is the "zero lost leads" guarantee.
-- Timeout for the LSQ call is 10s, with **one** retry on network error or 5xx. Never retry on a 4xx.
+- Timeout for the LSQ call is 10s. Retry **once** on a network error or 5xx, and up to **twice on 429** (LSQ rate limit), with 0.8s and 1.6s back-off. Never retry any other 4xx.
 - If the honeypot field is filled, return `200` and skip LSQ silently.
-- Light rate limit per IP: 20/min, in-memory per instance (`lib/rate-limit.ts`). The booth Wi-Fi may NAT everyone behind one IP, so don't set it too tight.
+- Light rate limit per IP: **300/min**, in-memory per instance (`lib/rate-limit.ts`). It was 20/min, which would have blocked visitors: booth Wi-Fi and Jio/Airtel carrier NAT put many phones behind one IP. The honeypot is the real spam guard.
 
 ---
 
@@ -219,11 +237,13 @@ Design references: **thesleepcompany.in** and the **AceTech 2026 brochure** (`Ac
 
 | Field | Rules | Normalisation |
 |---|---|---|
-| name | 2–60 chars; letters, spaces, `.` `'` `-` | trim, collapse spaces |
-| phone | Indian mobile: 10 digits starting with 6–9 | strip spaces/dashes, strip leading `+91` / `91` / `0` |
-| organisation | 2–100 chars | trim, collapse spaces |
+| name | optional, never fails | trim, collapse spaces, cap at 60 |
+| phone | **required**: exactly 10 digits (any leading digit, so `1234567890` is accepted) | strip spaces/dashes, strip leading `+91` / `91` / `0`. The input box only accepts digits, max 10. |
+| organisation | optional, never fails | trim, collapse spaces, cap at 100 |
+| source | **required**: one of `SOURCES` exactly | — |
+| city | optional, never fails | trim, collapse spaces, cap at 60 |
 
-Error copy should be short and human, e.g. "Please enter a valid 10-digit mobile number."
+No visible error copy (see §1). Schema messages exist only for screen readers and logs.
 
 ---
 
@@ -239,14 +259,14 @@ Error copy should be short and human, e.g. "Please enter a valid 10-digit mobile
 
 Every **valid** submission is also written to **Aiven Postgres** (table `acetech_leads`, schema in `db/schema.sql`). This record is independent of LeadSquared, for reporting and for backfill. LSQ stays the system of record.
 
-- One row per submission. `lead_kind` is `new` or `existing`. `lsq_outcome` is `created`, `activity_logged` or `failed`. The row also stores `lsq_status`, `lsq_prospect_id`, `lsq_activity_event` (231/232), the redacted `lsq_error`, `user_agent`, and `created_at` (UTC).
+- One row per submission, including `source_type` (the dropdown value) and `city`. `name` / `organisation` / `city` are NULL when left empty. `lead_kind` is `new` or `existing`. `lsq_outcome` is `created`, `activity_logged` or `failed`. The row also stores `lsq_status`, `lsq_prospect_id`, `lsq_activity_event` (231/232), the redacted `lsq_error`, `user_agent`, and `created_at` (UTC).
 - Invalid submissions and honeypot hits are **not** logged.
 - The insert is **awaited before responding**, capped at 3s, and never throws. `after()` was tried first, but its writes did not land on Vercel. If the DB is slow or down, the visitor still gets their result, and `db_error` / `db_timeout` / `db_config_invalid` is logged with the full lead.
 - Every `/api/lead` response carries an **`x-lead-db`** header (`logged` | `not_configured` | `config_invalid` | `error` | `timeout`). Check it with `curl -D -` to verify DB logging in production. The Vercel log CLI only shows the first log line per request.
 - `DATABASE_URL` accepts the raw URI, a quoted URI, or Aiven's `psql '…'` quick-connect line.
 - Functions run in **`bom1` (Mumbai)** via `vercel.json`, next to LeadSquared (India) and Aiven. A warm submit takes about 0.9s; in `iad1` it was 1.7–4.4s.
 - Rows with `lsq_outcome = 'failed'` are the backfill list. Export them with `npm run leads:export -- failed`.
-- Connection: `DATABASE_URL` (server-only). The pool uses `max: 3`, because the Aiven plan allows only 15 connections. TLS is always on. Set `DATABASE_CA_CERT` (the Aiven project CA, PEM) to verify the server cert; otherwise it encrypts without verifying, the same as `sslmode=require`.
+- Connection: `DATABASE_URL` (server-only). The pool uses **`max: 2`** with a 5s idle timeout, because the Aiven plan allows only 15 connections and a spike can start ~7 Vercel instances. TLS is always on. Set `DATABASE_CA_CERT` (the Aiven project CA, PEM) to verify the server cert; otherwise it encrypts without verifying, the same as `sslmode=require`.
 - `npm run db:migrate` applies the schema (idempotent). `npm run leads:export` writes a CSV to `exports/` (git-ignored, times in IST).
 - Phone numbers are PII. Never log them unmasked except in failure/backfill lines, and never commit exports.
 

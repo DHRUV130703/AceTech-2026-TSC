@@ -21,3 +21,9 @@ CREATE TABLE IF NOT EXISTS acetech_leads (
 CREATE INDEX IF NOT EXISTS acetech_leads_created_at_idx ON acetech_leads (created_at DESC);
 CREATE INDEX IF NOT EXISTS acetech_leads_phone_idx      ON acetech_leads (phone);
 CREATE INDEX IF NOT EXISTS acetech_leads_failed_idx     ON acetech_leads (created_at) WHERE lsq_outcome = 'failed';
+
+-- 2026-11-18: form v2 — Source dropdown + City; Name / Organisation became optional.
+ALTER TABLE acetech_leads ADD COLUMN IF NOT EXISTS source_type TEXT;   -- End Client | Others | Architect | Interior Designer
+ALTER TABLE acetech_leads ADD COLUMN IF NOT EXISTS city        TEXT;
+ALTER TABLE acetech_leads ALTER COLUMN name         DROP NOT NULL;
+ALTER TABLE acetech_leads ALTER COLUMN organisation DROP NOT NULL;
