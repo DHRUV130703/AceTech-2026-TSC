@@ -50,7 +50,7 @@ Below it, a short secondary line, e.g. "Our team will get in touch with you shor
 > Looks like you're already part of The Sleep Company family — we have your details with us.
 > Thank you for stopping by at AceTech 2026. Our team will reach out to you shortly.
 
-It uses a heart icon (navy on aqua) instead of the green check, and the same contact block. Also show the brochure contact details: Sleep Expert **+91 98119 81911**, **care@thesleepcompany.in**, and **thesleepcompany.in**.
+It uses a heart icon (navy on aqua) instead of the green check, and the same contact block. The contact block shows **only the email `connect@thesleepcompany.in`** (heading "Need help sooner? Write to us") plus the "Visit thesleepcompany.in" button. **No phone number**: the team removed it on 2026-11-18.
 
 **Success metrics.** Fewer than 20 seconds from scan to submit. Zero lost leads. At least 99% of submissions reach LSQ, with the rest recoverable from logs.
 

@@ -133,21 +133,13 @@ export function LeadForm() {
         ))}
 
         <div className="mt-6 rounded-xl bg-aqua-50 p-4 text-left text-sm">
-          <p className="font-semibold">Need help sooner? Talk to our Sleep Expert</p>
-          <ul className="mt-2 space-y-1.5">
-            <li>
-              📞{' '}
-              <a className="font-semibold underline underline-offset-2" href="tel:+919811981911">
-                +91 98119 81911
-              </a>
-            </li>
-            <li>
-              ✉️{' '}
-              <a className="font-semibold underline underline-offset-2" href="mailto:care@thesleepcompany.in">
-                care@thesleepcompany.in
-              </a>
-            </li>
-          </ul>
+          <p className="font-semibold">Need help sooner? Write to us</p>
+          <p className="mt-2">
+            ✉️{' '}
+            <a className="font-semibold break-all underline underline-offset-2" href="mailto:connect@thesleepcompany.in">
+              connect@thesleepcompany.in
+            </a>
+          </p>
         </div>
 
         <a
