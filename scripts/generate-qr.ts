@@ -113,7 +113,7 @@ const poster = `<?xml version="1.0" encoding="UTF-8"?>
   <!-- Footer -->
   <rect y="${H - 150}" width="${W}" height="150" fill="${NAVY}"/>
   <text x="${W / 2}" y="${H - 88}" text-anchor="middle" font-family="${font}" font-weight="700" font-size="28" fill="#fff" letter-spacing="3">MATTRESS | CHAIR | RECLINER BED | RECLINER SOFA | PILLOW</text>
-  <text x="${W / 2}" y="${H - 40}" text-anchor="middle" font-family="${font}" font-weight="500" font-size="24" fill="${AQUA_200}">thesleepcompany.in  ·  +91 98119 81911</text>
+  <text x="${W / 2}" y="${H - 40}" text-anchor="middle" font-family="${font}" font-weight="500" font-size="24" fill="${AQUA_200}">thesleepcompany.in  ·  connect@thesleepcompany.in</text>
 </svg>
 `;
 
