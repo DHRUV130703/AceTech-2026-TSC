@@ -27,3 +27,6 @@ ALTER TABLE acetech_leads ADD COLUMN IF NOT EXISTS source_type TEXT;   -- End Cl
 ALTER TABLE acetech_leads ADD COLUMN IF NOT EXISTS city        TEXT;
 ALTER TABLE acetech_leads ALTER COLUMN name         DROP NOT NULL;
 ALTER TABLE acetech_leads ALTER COLUMN organisation DROP NOT NULL;
+
+-- 2026-11-20: optional free-text Remarks — stored here only, never sent to LeadSquared.
+ALTER TABLE acetech_leads ADD COLUMN IF NOT EXISTS remarks TEXT;

@@ -46,6 +46,7 @@ Scan QR ──▶ Landing / Form ──submit──▶ POST /api/lead
 | 3 | Firm / Organisation | optional | text | 231: `mx_Custom_6` (Firm Name). Not sent on 232. |
 | 4 | Source | **yes** | dropdown with no default: **End Client**, **Others**, **Architect**, **Interior Designer** (exact LSQ values) | 232: `mx_Custom_32` · 231: `mx_Custom_14` |
 | 5 | City | optional | text | 232: `mx_Custom_33` · 231: `mx_Custom_13` |
+| 6 | Remarks | optional | textarea (3 rows, max 500) | **Not sent to LSQ.** Stored only in Postgres column `remarks` (§6a). Added 2026-11-20. |
 
 - **No validation text in the UI (team decision).** An invalid or missing required field gets a red outline and focus, plus a screen-reader-only hint. Never add messages like "Please enter a valid mobile number".
 - Required fields carry a red `*`; optional ones say "(optional)".
@@ -173,7 +174,7 @@ Payloads are built only in `buildPayload()` in `lib/leadsquared.ts`. Empty optio
 - The access key contains a literal `$`. In `.env.local` it must be escaped as `\$`, but in the **Vercel dashboard** enter it unescaped (`u$…`). `readConfig()` tolerates `\$`, `%24`, quotes and whitespace. If LSQ ever returns 401 "Invalid User Details", the error log includes a `creds` fingerprint (length + sha256 prefix) to compare against the expected key.
 
 ### API route contract: `POST /api/lead`
-- Request: `{ name?, phone, organisation?, source, city?, website /* honeypot */ }`
+- Request: `{ name?, phone, organisation?, source, city?, remarks?, website /* honeypot */ }`. `remarks` goes to the DB row only; `buildPayload()` never reads it.
 - Re-validate with the shared zod schema. Never trust client validation.
 - Responses:
   - `200 { ok: true, existing: false }`: new lead created in LSQ (231, or 232 for End Client).
@@ -216,7 +217,7 @@ Design references: **thesleepcompany.in** and the **AceTech 2026 brochure** (`Ac
 ### Layout (mobile-first: assume a phone held in one hand, outdoors or bright-hall lighting)
 1. **Header:** TSC logo (`public/brand/logo.svg`) centred on a navy band or the aqua grid.
 2. **Hero line:** "WELCOME TO THE SLEEP COMPANY", then a subline: "Share your details and our team will connect with you." Optional small tag: "AceTech 2026".
-3. **Form card:** three fields and a full-width primary button **"Submit"** (navy, white text, height ≥ 48px, radius 12px).
+3. **Form card:** the six fields from §1 and a full-width primary button **"Submit"** (navy, white text, height ≥ 48px, radius 12px).
 4. **Footer strip:** "MATTRESS | CHAIR | RECLINER BED | RECLINER SOFA | PILLOW" in small caps, like the brochure cover.
 5. **Thank-you state:** replaces the form in place with no route change. Show a check icon, the exact success copy (§1), the contact block, and a "Visit thesleepcompany.in" link button.
 
@@ -242,6 +243,7 @@ Design references: **thesleepcompany.in** and the **AceTech 2026 brochure** (`Ac
 | organisation | optional, never fails | trim, collapse spaces, cap at 100 |
 | source | **required**: one of `SOURCES` exactly | — |
 | city | optional, never fails | trim, collapse spaces, cap at 60 |
+| remarks | optional, never fails | trim, collapse spaces (newlines become spaces), cap at 500. Postgres only. |
 
 No visible error copy (see §1). Schema messages exist only for screen readers and logs.
 
@@ -251,7 +253,7 @@ No visible error copy (see §1). Schema messages exist only for screen readers a
 
 - **Conference Wi-Fi is bad.** If the request to `/api/lead` fails at the network level, keep the form filled in, show "Couldn't submit — check your connection and tap Submit again", and allow retry. Never clear the input on failure.
 - Server-side, log a structured line for every attempt: `{ ts, outcome, phoneMasked: "98XXXXXX11", organisation, lsqStatus }`. On upstream failure, also log the full normalised lead (and only then) so it can be backfilled. Never log keys.
-- **Privacy (India DPDP Act).** Put a one-line notice under the button: "By submitting, you agree to be contacted by The Sleep Company." Collect nothing beyond the three fields. No third-party trackers in v1.
+- **Privacy (India DPDP Act).** Put a one-line notice under the button: "By submitting, you agree to be contacted by The Sleep Company." Collect nothing beyond the form fields in §1. No third-party trackers in v1.
 
 ---
 
@@ -259,7 +261,7 @@ No visible error copy (see §1). Schema messages exist only for screen readers a
 
 Every **valid** submission is also written to **Aiven Postgres** (table `acetech_leads`, schema in `db/schema.sql`). This record is independent of LeadSquared, for reporting and for backfill. LSQ stays the system of record.
 
-- One row per submission, including `source_type` (the dropdown value) and `city`. `name` / `organisation` / `city` are NULL when left empty. `lead_kind` is `new` or `existing`. `lsq_outcome` is `created`, `activity_logged` or `failed`. The row also stores `lsq_status`, `lsq_prospect_id`, `lsq_activity_event` (231/232), the redacted `lsq_error`, `user_agent`, and `created_at` (UTC).
+- One row per submission, including `source_type` (the dropdown value), `city` and `remarks` (free text that exists **only** here, never in LSQ). `name` / `organisation` / `city` / `remarks` are NULL when left empty. `lead_kind` is `new` or `existing`. `lsq_outcome` is `created`, `activity_logged` or `failed`. The row also stores `lsq_status`, `lsq_prospect_id`, `lsq_activity_event` (231/232), the redacted `lsq_error`, `user_agent`, and `created_at` (UTC).
 - Invalid submissions and honeypot hits are **not** logged.
 - The insert is **awaited before responding**, capped at 3s, and never throws. `after()` was tried first, but its writes did not land on Vercel. If the DB is slow or down, the visitor still gets their result, and `db_error` / `db_timeout` / `db_config_invalid` is logged with the full lead.
 - Every `/api/lead` response carries an **`x-lead-db`** header (`logged` | `not_configured` | `config_invalid` | `error` | `timeout`). Check it with `curl -D -` to verify DB logging in production. The Vercel log CLI only shows the first log line per request.

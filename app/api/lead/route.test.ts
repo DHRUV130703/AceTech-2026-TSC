@@ -23,7 +23,7 @@ const req = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
-const valid = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect', city: 'Mumbai' };
+const valid = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect', city: 'Mumbai', remarks: 'Needs 40 beds' };
 
 describe('POST /api/lead', () => {
   beforeEach(() => {
@@ -115,6 +115,12 @@ describe('POST /api/lead', () => {
       expect(logLeadToDb).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'failed', lsqStatus: 500, error: 'boom' }));
     });
 
+    it('stores remarks in the DB row (buildPayload never sends it to LSQ)', async () => {
+      createLeadWithActivity.mockResolvedValue({ ok: true, status: 200 });
+      await POST(req(valid));
+      expect(logLeadToDb.mock.calls[0][0].lead.remarks).toBe('Needs 40 beds');
+    });
+
     it('does not log invalid or honeypot submissions', async () => {
       await POST(req({ ...valid, phone: '1' }));
       await POST(req({ ...valid, website: 'x' }));
@@ -127,7 +133,7 @@ describe('POST /api/lead', () => {
     const res = await POST(req({ phone: '1234567890', source: 'End Client' }));
     expect(res.status).toBe(200);
     expect(createLeadWithActivity).toHaveBeenCalledWith(
-      { name: '', phone: '1234567890', organisation: '', source: 'End Client', city: '' },
+      { name: '', phone: '1234567890', organisation: '', source: 'End Client', city: '', remarks: '' },
       { kind: 'new' },
     );
   });

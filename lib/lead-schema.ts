@@ -38,6 +38,8 @@ export const leadSchema = z.object({
   organisation: optionalText(100),
   source: z.enum(SOURCES, { error: 'Please select a source.' }),
   city: optionalText(60),
+  /** Stored in Postgres only (column `remarks`) — never sent to LeadSquared. */
+  remarks: optionalText(500),
 });
 
 export type LeadInput = z.input<typeof leadSchema>;

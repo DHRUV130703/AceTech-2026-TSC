@@ -5,7 +5,7 @@ vi.mock('./db', () => ({ getPool: () => null }));
 const { logLeadToDb, INSERT_SQL } = await import('./lead-log');
 const { poolConfig } = await vi.importActual<typeof import('./db')>('./db');
 
-const lead = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect' as const, city: 'Mumbai' };
+const lead = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect' as const, city: 'Mumbai', remarks: 'Needs 40 beds' };
 
 describe('logLeadToDb', () => {
   it('inserts one parameterised row', async () => {
@@ -16,15 +16,15 @@ describe('logLeadToDb', () => {
       { query } as unknown as Pool,
     );
     expect(ok).toBe('logged');
-    expect(query).toHaveBeenCalledWith(INSERT_SQL, ['Priya Sharma', '9876543210', 'Studio Co', 'Architect', 'Mumbai', 'existing', 'activity_logged', 200, 'p1', 232, null, 'UA']);
+    expect(query).toHaveBeenCalledWith(INSERT_SQL, ['Priya Sharma', '9876543210', 'Studio Co', 'Architect', 'Mumbai', 'Needs 40 beds', 'existing', 'activity_logged', 200, 'p1', 232, null, 'UA']);
   });
 
   it('stores empty optional fields as NULL', async () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const query = vi.fn().mockResolvedValue({});
-    await logLeadToDb({ lead: { ...lead, name: '', organisation: '', city: '' }, kind: 'new', outcome: 'created', lsqStatus: 200 }, { query } as unknown as Pool);
+    await logLeadToDb({ lead: { ...lead, name: '', organisation: '', city: '', remarks: '' }, kind: 'new', outcome: 'created', lsqStatus: 200 }, { query } as unknown as Pool);
     const params = query.mock.calls[0][1];
-    expect([params[0], params[2], params[4]]).toEqual([null, null, null]);
+    expect([params[0], params[2], params[4], params[5]]).toEqual([null, null, null, null]);
   });
 
   it('never throws when the DB fails', async () => {

@@ -42,6 +42,7 @@ type FieldDef = {
       maxLength: number;
     }
   | { kind: 'select'; options: readonly string[] }
+  | { kind: 'textarea'; maxLength: number }
 );
 
 /** Order shown in the form. Only phone and source are mandatory. */
@@ -51,6 +52,8 @@ const FIELDS: FieldDef[] = [
   { key: 'organisation', label: 'Firm / Organisation', kind: 'input', type: 'text', autoComplete: 'organization', placeholder: 'e.g. Studio Design Co.', autoCapitalize: 'words', maxLength: 100 },
   { key: 'source', label: 'Source', required: true, kind: 'select', options: SOURCES, placeholder: 'Select source' },
   { key: 'city', label: 'City', kind: 'input', type: 'text', autoComplete: 'address-level2', placeholder: 'e.g. Mumbai', autoCapitalize: 'words', maxLength: 60 },
+  // Stored in Postgres only — never sent to LeadSquared.
+  { key: 'remarks', label: 'Remarks', kind: 'textarea', placeholder: 'Anything you would like us to know', maxLength: 500 },
 ];
 
 /** Keep the phone box to 10 digits; autofilled "+91 98765 43210" / "098…" are normalised first. */
@@ -60,11 +63,11 @@ const cleanPhoneInput = (raw: string) => {
 };
 
 export function LeadForm() {
-  const [values, setValues] = useState<Values>({ name: '', phone: '', organisation: '', source: '', city: '' });
+  const [values, setValues] = useState<Values>({ name: '', phone: '', organisation: '', source: '', city: '', remarks: '' });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>('idle');
-  const inputs = useRef<Partial<Record<LeadField, HTMLInputElement | HTMLSelectElement | null>>>({});
+  const inputs = useRef<Partial<Record<LeadField, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>>>({});
   const honeypot = useRef<HTMLInputElement>(null);
   const thanksHeading = useRef<HTMLHeadingElement>(null);
 
@@ -229,7 +232,7 @@ export function LeadForm() {
                 )}
               </label>
               <div
-                className={`relative flex h-12 items-center overflow-hidden rounded-xl border-2 bg-aqua-50 transition-colors focus-within:bg-white ${
+                className={`relative flex ${f.kind === 'textarea' ? 'items-stretch' : 'h-12 items-center'} overflow-hidden rounded-xl border-2 bg-aqua-50 transition-colors focus-within:bg-white ${
                   invalid ? 'border-error' : 'border-transparent focus-within:border-navy-900'
                 }`}
               >
@@ -270,6 +273,19 @@ export function LeadForm() {
                       <path d="M5 7.5l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </>
+                ) : f.kind === 'textarea' ? (
+                  <textarea
+                    {...shared}
+                    ref={(el) => {
+                      inputs.current[f.key] = el;
+                    }}
+                    rows={3}
+                    autoCapitalize="sentences"
+                    placeholder={f.placeholder}
+                    maxLength={f.maxLength}
+                    onChange={(e) => setValue(e.target.value)}
+                    className="block w-full resize-none bg-transparent px-4 py-3 text-base text-navy-900 outline-none placeholder:text-navy-800/40"
+                  />
                 ) : (
                   <input
                     {...shared}

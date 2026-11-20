@@ -12,10 +12,10 @@ describe('normalisePhone', () => {
 });
 
 describe('leadSchema', () => {
-  const ok = { name: '  Priya   Sharma ', phone: '+91 98765 43210', organisation: ' Studio  Co ', source: 'Architect', city: ' Navi  Mumbai ' };
+  const ok = { name: '  Priya   Sharma ', phone: '+91 98765 43210', organisation: ' Studio  Co ', source: 'Architect', city: ' Navi  Mumbai ', remarks: ' Wants  hotel  mattresses ' };
 
   it('normalises valid input', () => {
-    expect(leadSchema.parse(ok)).toEqual({ name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect', city: 'Navi Mumbai' });
+    expect(leadSchema.parse(ok)).toEqual({ name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect', city: 'Navi Mumbai', remarks: 'Wants hotel mattresses' });
   });
 
   it('only phone and source are required', () => {
@@ -25,6 +25,7 @@ describe('leadSchema', () => {
       organisation: '',
       source: 'End Client',
       city: '',
+      remarks: '',
     });
   });
 
@@ -45,10 +46,11 @@ describe('leadSchema', () => {
   });
 
   it('never fails on optional fields — trims and caps length instead', () => {
-    const r = leadSchema.parse({ ...ok, name: '123 !!', organisation: 'x'.repeat(150), city: 'y'.repeat(80) });
+    const r = leadSchema.parse({ ...ok, name: '123 !!', organisation: 'x'.repeat(150), city: 'y'.repeat(80), remarks: 'z'.repeat(600) });
     expect(r.name).toBe('123 !!');
     expect(r.organisation).toHaveLength(100);
     expect(r.city).toHaveLength(60);
+    expect(r.remarks).toHaveLength(500);
   });
 });
 

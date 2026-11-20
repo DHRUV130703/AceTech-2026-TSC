@@ -47,6 +47,7 @@ export async function POST(req: Request) {
     organisation: str(body.organisation),
     source: str(body.source),
     city: str(body.city),
+    remarks: str(body.remarks), // Postgres only — buildPayload() never reads it
   });
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: 'validation', fields: fieldErrors(parsed.error) }, { status: 400 });

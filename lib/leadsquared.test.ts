@@ -3,9 +3,9 @@ import { activityTypeFor, buildPayload, cleanCredential, createLeadWithActivity,
 
 import type { Lead } from './lead-schema';
 
-const lead: Lead = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect', city: 'Mumbai' };
+const lead: Lead = { name: 'Priya Sharma', phone: '9876543210', organisation: 'Studio Co', source: 'Architect', city: 'Mumbai', remarks: 'Needs 40 beds' };
 const endClient: Lead = { ...lead, source: 'End Client' };
-const bare: Lead = { name: '', phone: '9876543210', organisation: '', source: 'Interior Designer', city: '' };
+const bare: Lead = { name: '', phone: '9876543210', organisation: '', source: 'Interior Designer', city: '', remarks: '' };
 const config = { host: 'api.test', accessKey: 'AK$1', secretKey: 'SK', activityEvent: 231 };
 const now = new Date('2026-11-05T04:30:05.123Z');
 
@@ -96,6 +96,14 @@ describe('buildPayload', () => {
     const p232 = buildPayload(bare, { kind: 'existing', activityEvent: 232, now });
     expect(p232.LeadDetails.map((a) => a.Attribute)).toEqual(['Phone']);
     expect(p232.Activity.Fields.map((f) => f.SchemaName)).toEqual(['ActivityEvent_Note', 'mx_Custom_32', 'mx_Custom_29', 'mx_Custom_1']);
+  });
+
+  it('never sends remarks to LeadSquared (Postgres only)', () => {
+    for (const kind of ['new', 'existing'] as const) {
+      for (const l of [lead, endClient]) {
+        expect(JSON.stringify(buildPayload(l, { kind, activityEvent: 231, now }))).not.toContain('Needs 40 beds');
+      }
+    }
   });
 
   it('formats UTC datetime', () => expect(formatUtc(now)).toBe('2026-11-05 04:30:05'));
